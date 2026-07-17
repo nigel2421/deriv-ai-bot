@@ -1,0 +1,17 @@
+venv/
+.git/
+.pytest_cache/
+__pycache__/
+**/__pycache__/
+*.pyc
+.env
+data/logs/*
+data/historical/*
+data/training/*
+!data/training/.gitkeep
+deriv-ai-bot/
+*.md
+.idea/
+.vscode/
+tests/
+docs/

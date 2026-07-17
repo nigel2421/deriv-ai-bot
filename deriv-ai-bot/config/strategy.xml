@@ -1,31 +1,88 @@
 <configroot>
+    <!--
+      Digits portfolio: OVER@6 (digits 7-9) and UNDER@4 (digits 0-3).
+      Martingale recovery + global risk caps protect the account.
+    -->
     <global>
-        <min_confidence>0.75</min_confidence>
+        <min_confidence>0.72</min_confidence>
         <max_daily_loss_pct>5.0</max_daily_loss_pct>
-        <max_consecutive_losses>6</max_consecutive_losses>
+        <max_consecutive_losses>5</max_consecutive_losses>
         <trade_pause_minutes>60</trade_pause_minutes>
     </global>
-    
-    <market symbol="R_100">
+
+    <!-- Volatility indices — diversified last-digit markets -->
+    <market symbol="R_10">
         <strategy type="martingale">
-            <base_stake>2.0</base_stake>
-            <max_steps>6</max_steps>
+            <base_stake>1.0</base_stake>
+            <max_steps>5</max_steps>
+            <over_barrier>6</over_barrier>
+            <under_barrier>4</under_barrier>
+            <duration>5</duration>
+            <duration_unit>t</duration_unit>
             <contract_types>
                 <type>DIGITOVER</type>
                 <type>DIGITUNDER</type>
-                <type>DIGITEVEN</type>
-                <type>DIGITODD</type>
             </contract_types>
-            <preferred_condition>ranging</preferred_condition>
-            <enable_correlated_pairs>true</enable_correlated_pairs>
         </strategy>
     </market>
-    
-    <market symbol="R_75">
-        <strategy type="zuno">
+
+    <market symbol="R_25">
+        <strategy type="martingale">
             <base_stake>1.0</base_stake>
-            <switch_on_loss>DIGITUNDER</switch_on_loss>
-            <switch_on_win>DIGITOVER</switch_on_win>
+            <max_steps>5</max_steps>
+            <over_barrier>6</over_barrier>
+            <under_barrier>4</under_barrier>
+            <duration>5</duration>
+            <duration_unit>t</duration_unit>
+            <contract_types>
+                <type>DIGITOVER</type>
+                <type>DIGITUNDER</type>
+            </contract_types>
+        </strategy>
+    </market>
+
+    <market symbol="R_50">
+        <strategy type="martingale">
+            <base_stake>1.5</base_stake>
+            <max_steps>5</max_steps>
+            <over_barrier>6</over_barrier>
+            <under_barrier>4</under_barrier>
+            <duration>5</duration>
+            <duration_unit>t</duration_unit>
+            <contract_types>
+                <type>DIGITOVER</type>
+                <type>DIGITUNDER</type>
+            </contract_types>
+        </strategy>
+    </market>
+
+    <market symbol="R_75">
+        <strategy type="martingale">
+            <base_stake>1.5</base_stake>
+            <max_steps>5</max_steps>
+            <over_barrier>6</over_barrier>
+            <under_barrier>4</under_barrier>
+            <duration>5</duration>
+            <duration_unit>t</duration_unit>
+            <contract_types>
+                <type>DIGITOVER</type>
+                <type>DIGITUNDER</type>
+            </contract_types>
+        </strategy>
+    </market>
+
+    <market symbol="R_100">
+        <strategy type="martingale">
+            <base_stake>2.0</base_stake>
+            <max_steps>5</max_steps>
+            <over_barrier>6</over_barrier>
+            <under_barrier>4</under_barrier>
+            <duration>5</duration>
+            <duration_unit>t</duration_unit>
+            <contract_types>
+                <type>DIGITOVER</type>
+                <type>DIGITUNDER</type>
+            </contract_types>
         </strategy>
     </market>
 </configroot>

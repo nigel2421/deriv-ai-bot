@@ -1,0 +1,25 @@
+# Cloud Run image (Python 3.12, Linux) — minimal set for trading + HTTP status
+# Let pip resolve compatible numpy/tensorflow stack
+
+# HTTP / Cloud Run
+uvicorn[standard]>=0.30.0,<0.35
+starlette>=0.37,<0.48
+httpx>=0.27
+python-dotenv>=1.0
+python-telegram-bot>=21.0,<23
+websocket-client>=1.6
+requests>=2.31
+
+# Data / ML
+numpy>=1.26.0,<2.2.0
+pandas>=2.1.0,<2.3
+scikit-learn>=1.4.0,<1.7
+joblib>=1.3
+xgboost>=2.0.0,<3.1
+ta>=0.11.0
+tensorflow>=2.16.0,<2.20
+scipy>=1.11.0,<1.16
+
+# Light utils used by dashboard code if imported
+streamlit>=1.32,<1.45
+pytest>=8.0

@@ -1,0 +1,48 @@
+services:
+  bot:
+    build: .
+    container_name: deriv-ai-bot
+    env_file:
+      - .env
+    environment:
+      - MODE=${MODE:-demo}
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+    volumes:
+      - ./data:/app/data
+      - ./src/models:/app/src/models
+      - ./config:/app/config:ro
+    restart: unless-stopped
+    # Cloud-compatible entry (HTTP + bot). For CLI-only: python src/main.py
+    ports:
+      - "8080:8080"
+    command:
+      [
+        "sh",
+        "-c",
+        "uvicorn src.cloud_app:app --host 0.0.0.0 --port 8080 --workers 1",
+      ]
+
+  # Optional local dashboard (read-only artifacts). Not required for trading.
+  dashboard:
+    build: .
+    container_name: deriv-ai-dashboard
+    profiles: ["dashboard"]
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - ./data:/app/data:ro
+      - ./src/models:/app/src/models:ro
+    ports:
+      - "8501:8501"
+    command:
+      [
+        "streamlit",
+        "run",
+        "src/dashboard/app.py",
+        "--server.address=0.0.0.0",
+        "--server.port=8501",
+      ]
+    restart: unless-stopped

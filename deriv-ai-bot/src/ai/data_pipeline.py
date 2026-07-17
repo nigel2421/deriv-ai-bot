@@ -1,18 +1,24 @@
 import logging
 from pathlib import Path
+from typing import List, Optional, Tuple
 
 import pandas as pd
+
+from src.strategy.digit_contracts import extract_last_digit
 
 logger = logging.getLogger(__name__)
 
 
 class DataPipeline:
-    """Handles data collection and preprocessing for AI."""
+    """Handles data loading and preprocessing for AI train/infer."""
 
     def __init__(self):
-        self.engineer = None  # Will init FeatureEngineer
+        self.engineer = None
+        self.feature_columns: Optional[List[str]] = None
 
-    def load_historical(self, csv_path: str = "data/historical/ticks.csv") -> pd.DataFrame:
+    def load_historical(
+        self, csv_path: str = "data/historical/ticks.csv"
+    ) -> pd.DataFrame:
         try:
             path = Path(csv_path)
             if not path.is_file():
@@ -25,8 +31,15 @@ class DataPipeline:
             logger.error("Failed to load data: %s", e)
             return pd.DataFrame()
 
-    def preprocess_for_training(self, df: pd.DataFrame) -> tuple:
-        """Prepare features + target (next digit)."""
+    def preprocess_for_training(
+        self, df: pd.DataFrame
+    ) -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
+        """
+        Prepare features + target.
+
+        Target is the **next** tick's last digit (shifted -1), not the current
+        row's digit — avoids label leakage.
+        """
         from src.ai.feature_engineering import FeatureEngineer
 
         self.engineer = FeatureEngineer()
@@ -35,17 +48,25 @@ class DataPipeline:
             logger.error("Feature engineering produced no rows (need more ticks).")
             return pd.DataFrame(), pd.Series(dtype=int), pd.Series(dtype=int)
 
-        # Target: last digit of price
         features_df = features_df.copy()
-        features_df["target_digit"] = (features_df["quote"] * 10).astype(int) % 10
+        # Current last digit already in features; target = next tick digit
+        features_df["next_digit"] = (
+            features_df["quote"].map(extract_last_digit).astype("float").shift(-1)
+        )
+        features_df = features_df.dropna(subset=["next_digit"])
+        features_df["target_digit"] = features_df["next_digit"].astype(int) % 10
         features_df["target_parity"] = features_df["target_digit"] % 2
+        features_df = features_df.drop(columns=["next_digit"])
 
-        drop_cols = ["target_digit", "target_parity", "quote", "epoch"]
-        X = features_df.drop(columns=[c for c in drop_cols if c in features_df.columns])
-        # Keep only numeric feature columns for model training
-        X = X.select_dtypes(include=["number"]).astype(float)
-        y_digit = features_df["target_digit"].astype(int)
-        y_parity = features_df["target_parity"].astype(int)
+        X = self.engineer.model_matrix(features_df)
+        y_digit = features_df.loc[X.index, "target_digit"].astype(int)
+        y_parity = features_df.loc[X.index, "target_parity"].astype(int)
 
+        self.feature_columns = list(X.columns)
+        logger.info(
+            "Training matrix: %d rows × %d features; digit dist sample=%s",
+            len(X),
+            X.shape[1],
+            y_digit.value_counts().sort_index().to_dict(),
+        )
         return X, y_digit, y_parity
-
