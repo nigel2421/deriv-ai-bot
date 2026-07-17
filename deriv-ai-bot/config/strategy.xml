@@ -1,0 +1,31 @@
+<configroot>
+    <global>
+        <min_confidence>0.75</min_confidence>
+        <max_daily_loss_pct>5.0</max_daily_loss_pct>
+        <max_consecutive_losses>6</max_consecutive_losses>
+        <trade_pause_minutes>60</trade_pause_minutes>
+    </global>
+    
+    <market symbol="R_100">
+        <strategy type="martingale">
+            <base_stake>2.0</base_stake>
+            <max_steps>6</max_steps>
+            <contract_types>
+                <type>DIGITOVER</type>
+                <type>DIGITUNDER</type>
+                <type>DIGITEVEN</type>
+                <type>DIGITODD</type>
+            </contract_types>
+            <preferred_condition>ranging</preferred_condition>
+            <enable_correlated_pairs>true</enable_correlated_pairs>
+        </strategy>
+    </market>
+    
+    <market symbol="R_75">
+        <strategy type="zuno">
+            <base_stake>1.0</base_stake>
+            <switch_on_loss>DIGITUNDER</switch_on_loss>
+            <switch_on_win>DIGITOVER</switch_on_win>
+        </strategy>
+    </market>
+</configroot>

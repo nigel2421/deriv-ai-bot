@@ -1,0 +1,14 @@
+python-deriv-api>=0.1.6
+tensorflow>=2.13.0
+xgboost>=1.7.5
+pandas>=2.0.3
+numpy>=1.24.3
+scikit-learn>=1.3.0
+python-dotenv>=1.0.0
+websocket-client>=1.6.1
+requests>=2.31.0
+python-telegram-bot>=20.0
+ta>=0.10.2  # Technical analysis library
+pytest>=7.4.0
+black>=23.0.0
+docker>=6.1.0
