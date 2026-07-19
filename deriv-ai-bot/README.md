@@ -13,7 +13,10 @@ Automated **Deriv.com** digits trading bot (Over/Under/Even/Odd) with hybrid **X
 | **API** | WebSocket client, `req_id` RPC, ticks, history, proposal→buy→monitor |
 | **AI** | Feature schema, train/evaluate gates, live inference + heuristic fallback |
 | **Strategy** | XML config, Martingale stakes, Zuno type switching |
-| **Risk** | Live balance, daily loss %, consecutive losses, max open, stake caps |
+| **Risk** | Live balance, session stop-loss 5–10%, 1:3 profit target, 1–2% stake, consecutive losses |
+| **DeepSeek** | Optional advisor analyzes trade types + feeds learning multipliers (`DEEPSEEK_API_KEY`) |
+| **Analytics** | Digit heatmap, patterns, edge/pattern scores, AI filter (Skip/Trade), edge scanner, adaptive stake |
+| **Gates** | Auto-trade only if Strength≥75 · **Clarity≥80** · Edge≥80 · Live≥80 · Sample≥500 · Quality≥80 |
 | **Ops** | Telegram `/status` `/pause` `/resume` `/stats`, structured logs |
 | **Research** | Data collector, tick backtest, Monte Carlo path analysis |
 | **Deploy** | Docker Compose, optional Streamlit dashboard |

@@ -13,4 +13,7 @@ def setup_logger():
             logging.StreamHandler()
         ]
     )
+    # Avoid logging full Telegram bot tokens in request URLs
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     return logging.getLogger(__name__)

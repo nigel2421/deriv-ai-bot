@@ -2,10 +2,10 @@ import logging
 from typing import Any, Dict, Optional
 
 from src.api.deriv_client import DerivClient
-from src.strategy.digit_contracts import (
+from src.strategy.contract_types import (
     build_proposal_fields,
     normalize_contract_type,
-    validate_digit_contract,
+    validate_contract,
 )
 
 logger = logging.getLogger(__name__)
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class TradeExecutor:
     """
-    Proposal + buy for Digits contracts using correlated DerivClient.request().
+    Proposal + buy for Digits and Rise/Fall (CALL/PUT) via DerivClient.request().
     """
 
     def __init__(self, client: DerivClient):
@@ -31,9 +31,9 @@ class TradeExecutor:
         duration: int = 5,
         duration_unit: str = "t",
     ) -> Dict[str, Any]:
-        ok, reason, nb = validate_digit_contract(contract_type, barrier)
+        ok, reason, nb = validate_contract(contract_type, barrier)
         if not ok:
-            raise ValueError(f"Invalid digit contract: {reason}")
+            raise ValueError(f"Invalid contract: {reason}")
 
         ct = normalize_contract_type(contract_type)
         assert ct is not None
@@ -54,7 +54,7 @@ class TradeExecutor:
             proposal["underlying_symbol"] = symbol
         else:
             proposal["symbol"] = symbol
-        # Merge barrier only when required (EVEN/ODD omit it)
+        # Digits: barrier when required; CALL/PUT: no barrier
         proposal.update(build_proposal_fields(ct, nb))
         return proposal
 
@@ -66,15 +66,23 @@ class TradeExecutor:
         barrier: Optional[int] = None,
         currency: Optional[str] = None,
         duration: int = 5,
+        duration_unit: str = "t",
         timeout: float = 20.0,
     ) -> Optional[Dict[str, Any]]:
         """
         Request a proposal and return the proposal object, or None on failure.
+        duration_unit: t=ticks, m=minutes, s=seconds
         """
         currency = currency or self.client.get_currency()
         try:
             msg = self.build_proposal(
-                symbol, contract_type, stake, barrier, currency, duration
+                symbol,
+                contract_type,
+                stake,
+                barrier,
+                currency,
+                duration,
+                duration_unit=duration_unit or "t",
             )
         except ValueError as e:
             self.last_error = str(e)
@@ -82,13 +90,14 @@ class TradeExecutor:
             return None
 
         logger.info(
-            "Proposal request: %s %s stake=%s barrier=%s currency=%s payload_barrier=%s",
+            "Proposal request: %s %s stake=%s barrier=%s dur=%s%s currency=%s",
             symbol,
             msg.get("contract_type"),
             stake,
             barrier,
+            duration,
+            duration_unit,
             currency,
-            msg.get("barrier"),
         )
         try:
             data = await self.client.request(msg, timeout=timeout)
@@ -154,6 +163,25 @@ class TradeExecutor:
         )
         return buy
 
+    @staticmethod
+    def payout_metrics(proposal: Dict[str, Any], stake: float) -> Dict[str, float]:
+        """
+        Derive ask, payout, and net return from a proposal quote.
+        net_return = (payout - ask) / ask  (profit per dollar risked).
+        """
+        try:
+            ask = float(proposal.get("ask_price") or stake)
+        except (TypeError, ValueError):
+            ask = float(stake)
+        if ask <= 0:
+            ask = float(stake) if float(stake) > 0 else 1.0
+        try:
+            payout = float(proposal.get("payout") or 0)
+        except (TypeError, ValueError):
+            payout = 0.0
+        net_return = (payout - ask) / ask if ask > 0 else 0.0
+        return {"ask": ask, "payout": payout, "net_return": net_return}
+
     async def propose_and_buy(
         self,
         symbol: str,
@@ -162,13 +190,16 @@ class TradeExecutor:
         barrier: Optional[int] = None,
         currency: Optional[str] = None,
         duration: int = 5,
+        duration_unit: str = "t",
         execute: bool = True,
         timeout: float = 20.0,
+        min_net_return: Optional[float] = None,
     ) -> Optional[Dict[str, Any]]:
         """
-        Full path: proposal → (optional) buy.
+        Full path: proposal → payout gate → (optional) buy.
 
         When execute=False, only requests a proposal (paper / dry-run).
+        When min_net_return is set, skips buy if (payout-ask)/ask is below it.
         Returns a result dict with keys: proposal, buy (optional), contract_id.
         """
         self.last_error = None
@@ -179,11 +210,13 @@ class TradeExecutor:
             barrier=barrier,
             currency=currency,
             duration=duration,
+            duration_unit=duration_unit or "t",
             timeout=timeout,
         )
         if not proposal:
             return None
 
+        metrics = self.payout_metrics(proposal, stake)
         result: Dict[str, Any] = {
             "proposal": proposal,
             "buy": None,
@@ -192,18 +225,40 @@ class TradeExecutor:
             "contract_type": contract_type,
             "stake": stake,
             "barrier": barrier,
+            "duration": duration,
+            "duration_unit": duration_unit,
             "executed": False,
+            "ask_price": metrics["ask"],
+            "payout": metrics["payout"],
+            "net_return": metrics["net_return"],
         }
 
         if not execute:
             logger.info("Dry-run: proposal only (execute=False)")
             return result
 
+        # Skip junk odds (e.g. OVER@0 paying ~+$0.09 on $1)
+        if min_net_return is not None and metrics["payout"] > 0:
+            if metrics["net_return"] + 1e-9 < float(min_net_return):
+                msg = (
+                    f"Payout too low: net +{metrics['net_return']:.0%} "
+                    f"(payout={metrics['payout']:.2f} on ask={metrics['ask']:.2f}) "
+                    f"< required +{float(min_net_return):.0%}"
+                )
+                self.last_error = msg
+                result["skipped_low_payout"] = True
+                result["error"] = msg
+                logger.warning(
+                    "Skip buy %s %s barrier=%s: %s",
+                    symbol,
+                    contract_type,
+                    barrier,
+                    msg,
+                )
+                return result
+
         proposal_id = proposal["id"]
-        try:
-            ask = float(proposal.get("ask_price", stake))
-        except (TypeError, ValueError):
-            ask = float(stake)
+        ask = metrics["ask"]
         # Use max(ask, stake) so we cover the quoted price
         price = max(ask, float(stake))
 

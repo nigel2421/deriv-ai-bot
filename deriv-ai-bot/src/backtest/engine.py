@@ -81,7 +81,7 @@ class BacktestEngine:
         *,
         symbol: str = "R_100",
         initial_balance: float = 1000.0,
-        min_confidence: float = 0.55,
+        min_confidence: float = 0.80,
         duration_ticks: int = 5,
         win_payout: float = 0.95,
         warmup: int = 50,

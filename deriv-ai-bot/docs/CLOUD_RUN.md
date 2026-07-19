@@ -58,7 +58,23 @@ echo -n "YOUR_APP_ID"      | gcloud secrets create deriv-app-id --data-file=-
 # Optional Telegram
 echo -n "BOT_TOKEN" | gcloud secrets create telegram-bot-token --data-file=-
 echo -n "CHAT_ID"   | gcloud secrets create telegram-chat-id --data-file=-
+
+# DeepSeek — MUST be sk-… from platform.deepseek.com (NOT AIzaSy Google keys)
+echo -n "sk-YOUR_DEEPSEEK_KEY" | gcloud secrets create deepseek-api-key --data-file=-
+# Fix wrong key:
+# echo -n "sk-..." | gcloud secrets versions add deepseek-api-key --data-file=-
 ```
+
+### Persist learning across revisions (recommended before serious testing)
+
+Cloud Run disk is ephemeral — `data/learning_state.json` and HPP files reset every deploy.
+
+1. Create a GCS bucket and grant the Cloud Run SA `roles/storage.objectAdmin` on it.
+2. Set env: `LEARNING_GCS_URI=gs://YOUR_BUCKET/deriv-bot/learning/`
+3. Install dep: `google-cloud-storage` (in `requirements-cloud.txt` if missing).
+4. On boot the bot **pulls** learning files; after each learner save it **pushes**.
+
+Focused symbols (default cloud env): `R_25,R_50,1HZ50V,R_10` — denser samples than 10 markets.
 
 Grant the Cloud Run runtime service account access to secrets (replace PROJECT_NUMBER):
 

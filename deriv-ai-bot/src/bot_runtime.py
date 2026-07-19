@@ -68,6 +68,14 @@ class BotRuntime:
             "heartbeat": self.last_heartbeat,
             "closed_trades": risk.get("closed_trades"),
             "strategies": risk.get("strategies") or {},
+            "min_confidence": risk.get("min_confidence"),
+            "learning": risk.get("learning") or {},
+            "anti_spiral": risk.get("anti_spiral") or {},
+            "stake_mode": risk.get("stake_mode"),
+            "enable_minute": risk.get("enable_minute"),
+            "minute_duration": risk.get("minute_duration"),
+            "recent_trades": risk.get("recent_trades") or [],
+            "open_trade_details": risk.get("open_trade_details") or [],
             "risk": {
                 k: risk.get(k)
                 for k in (
@@ -76,13 +84,36 @@ class BotRuntime:
                     "open_trades",
                     "daily_pnl",
                     "paused",
+                    "paused_until",
+                    "pause_reason",
+                    "pause_remaining_min",
+                    "auto_resume_count",
                     "telegram_trading",
                     "execute_trades",
                     "consecutive_losses",
                     "trades_today",
                     "max_open_trades",
+                    "max_consecutive_losses",
+                    "trade_pause_minutes",
+                    "min_confidence",
+                    "session_stop_loss_pct",
+                    "session_stop_loss_amount",
+                    "session_target_rr",
+                    "session_target_amount",
+                    "session_target_hit",
+                    "session_stop_hit",
+                    "session_stop_on_target",
+                    "progress_to_target_pct",
+                    "progress_to_stop_pct",
+                    "base_stake",
+                    "max_stake_pct",
+                    "max_stake",
+                    "min_stake",
+                    "session_start_balance",
                 )
             },
+            "deepseek": risk.get("deepseek") or {},
+            "analytics": risk.get("analytics") or {},
         }
 
 
@@ -99,40 +130,115 @@ async def _trading_loop(rt: BotRuntime, cycle_seconds: int = 60) -> None:
     orch = rt.orchestrator
     fetcher = rt.fetcher
     client = rt.client
+    fail_streak = 0
 
     while not rt._stop.is_set():
         try:
+            # Keep WS alive — reconnect if dropped
+            if not client.connected or not client.authorized:
+                logger.warning("WS disconnected — reconnecting…")
+                ok = await client.connect()
+                if ok:
+                    client.subscribe_balance()
+                    syms = list(orch.active_symbols or SYMBOLS)
+                    fetcher.subscribe_symbols(syms)
+                    fail_streak = 0
+                else:
+                    fail_streak += 1
+                    rt.last_error = client.last_error or "reconnect failed"
+                    rt.status = "error" if fail_streak >= 5 else "starting"
+                    await asyncio.sleep(min(30, 5 * fail_streak))
+                    continue
+
             await orch.execute_trade_cycle()
             bal = await orch._live_balance(refresh=True)
             status = orch.risk_status()
-            sizes = fetcher.buffer_sizes(SYMBOLS)
+            # Extra safety: if cooldown expired mid-heartbeat, surface auto-resume
+            auto = orch.risk_manager.consume_auto_resume()
+            if auto:
+                await orch._handle_auto_resume(auto)
+                status = orch.risk_status()
+            syms = list(orch.active_symbols or SYMBOLS)
+            sizes = fetcher.buffer_sizes(syms)
             rt.buffer_sizes = sizes
             rt.last_cycle_at = datetime.now(timezone.utc).isoformat()
+            rt.status = "running"
+            fail_streak = 0
+            # Keep last_error for a single cycle if risk-paused (informational),
+            # but clear hard errors after a successful cycle.
+            if status.get("paused"):
+                rem = status.get("pause_remaining_min")
+                rt.last_error = (
+                    f"risk_paused ({rem}m left: {status.get('pause_reason') or 'cooldown'})"
+                    if rem is not None
+                    else f"risk_paused ({status.get('pause_reason') or 'cooldown'})"
+                )
+            else:
+                rt.last_error = None
             rt.last_heartbeat = {
                 "balance": bal,
                 "currency": client.get_currency(),
                 "open_trades": status.get("open_trades"),
                 "daily_pnl": status.get("daily_pnl"),
                 "risk_paused": status.get("paused"),
+                "pause_remaining_min": status.get("pause_remaining_min"),
+                "pause_reason": status.get("pause_reason"),
+                "consecutive_losses": status.get("consecutive_losses"),
+                "auto_resume_count": status.get("auto_resume_count"),
                 "telegram_trading": status.get("telegram_trading"),
+                "min_confidence": status.get("min_confidence"),
+                "learning_keys": (status.get("learning") or {}).get("keys"),
                 "buffers": sizes,
             }
             logger.info(
                 "Heartbeat balance=%s %s open=%s daily_pnl=%s "
-                "risk_paused=%s tg_trading=%s buffers=%s",
+                "risk_paused=%s rem=%sm reason=%s streak=%s auto_resumes=%s "
+                "tg_trading=%s min_conf=%s learn_keys=%s buffers=%s",
                 bal,
                 client.get_currency(),
                 status.get("open_trades"),
                 status.get("daily_pnl"),
                 status.get("paused"),
+                status.get("pause_remaining_min"),
+                status.get("pause_reason"),
+                status.get("consecutive_losses"),
+                status.get("auto_resume_count"),
                 status.get("telegram_trading"),
+                status.get("min_confidence"),
+                (status.get("learning") or {}).get("keys"),
                 sizes,
             )
         except asyncio.CancelledError:
             raise
         except Exception as e:
+            fail_streak += 1
             rt.last_error = str(e)
             logger.exception("Trade cycle error: %s", e)
+            # Soft degrade — keep looping and try reconnect next cycle
+            if fail_streak >= 5:
+                rt.status = "error"
+            # Aggressive recover: force WS reconnect after repeated failures
+            if fail_streak in (3, 6, 9) and client is not None:
+                logger.warning(
+                    "Fail streak=%s — forcing WS reconnect for resilience",
+                    fail_streak,
+                )
+                try:
+                    await client.close()
+                except Exception:
+                    pass
+                try:
+                    ok = await client.connect()
+                    if ok:
+                        client.subscribe_balance()
+                        fetcher.subscribe_symbols(
+                            list(orch.active_symbols or SYMBOLS)
+                        )
+                        logger.info("Forced reconnect OK after fail streak")
+                except Exception as re:
+                    logger.error("Forced reconnect failed: %s", re)
+            # Never permanently stop the loop — backoff then continue
+            await asyncio.sleep(min(60, 5 * fail_streak))
 
         try:
             await asyncio.wait_for(rt._stop.wait(), timeout=cycle_seconds)
@@ -198,6 +304,14 @@ async def start_bot(mode: Optional[str] = None, *, cycle_seconds: int = 60) -> B
         await client.close()
         return rt
 
+    # Restore learning/HPP/calibration from GCS before AdaptiveLearner loads
+    try:
+        from src.strategy.learning_persistence import bootstrap_learning_from_gcs
+
+        bootstrap_learning_from_gcs()
+    except Exception as e:
+        logger.debug("GCS learning bootstrap skipped: %s", e)
+
     client.subscribe_balance()
     balance = await client.refresh_balance()
     logger.info(
@@ -207,24 +321,27 @@ async def start_bot(mode: Optional[str] = None, *, cycle_seconds: int = 60) -> B
         (client.account or {}).get("loginid"),
     )
 
-    fetcher = PriceFetcher(client)
-    rt.fetcher = fetcher
-    fetcher.subscribe_symbols(SYMBOLS)
-
-    save_dir = str(ROOT / "data" / "historical") if SAVE_TICK_HISTORY else None
-    sizes = await fetcher.bootstrap_history(
-        SYMBOLS,
-        count=TICK_HISTORY_COUNT,
-        min_required=TICK_HISTORY_MIN,
-        save_dir=save_dir,
-    )
-    rt.buffer_sizes = sizes
-    logger.info("Tick bootstrap: %s", sizes)
-
     orch = TradingOrchestrator(client, rt.mode)
     rt.orchestrator = orch
     if balance is not None:
         orch.risk_manager.set_session_balance(balance)
+
+    syms = list(orch.active_symbols or SYMBOLS)
+    fetcher = PriceFetcher(client)
+    rt.fetcher = fetcher
+    # Orchestrator holds its own fetcher; share the same client buffers via client
+    orch.fetcher = fetcher
+    fetcher.subscribe_symbols(syms)
+
+    save_dir = str(ROOT / "data" / "historical") if SAVE_TICK_HISTORY else None
+    sizes = await fetcher.bootstrap_history(
+        syms,
+        count=TICK_HISTORY_COUNT,
+        min_required=max(20, min(TICK_HISTORY_MIN, 40)),
+        save_dir=save_dir,
+    )
+    rt.buffer_sizes = sizes
+    logger.info("Tick bootstrap (%d symbols): %s", len(syms), sizes)
 
     await orch.telegram.start_bot()
     logger.info("Risk status: %s", orch.risk_status())
@@ -233,7 +350,16 @@ async def start_bot(mode: Optional[str] = None, *, cycle_seconds: int = 60) -> B
     rt._task = asyncio.create_task(
         _trading_loop(rt, cycle_seconds=cycle_seconds), name="trading-loop"
     )
-    logger.info("Trading loop started (cycle=%ss)", cycle_seconds)
+    logger.info(
+        "Trading loop started (cycle=%ss symbols=%s min_conf=%.2f "
+        "learning_phase=%s keys=%s deepseek=%s)",
+        cycle_seconds,
+        syms,
+        orch.min_confidence,
+        orch.learner.cold_start_phase(),
+        orch.learner.snapshot().get("keys"),
+        "on" if orch.deepseek.enabled else f"off({orch.deepseek.last_error or 'no key'})",
+    )
     return rt
 
 
@@ -254,8 +380,25 @@ async def stop_bot() -> None:
 
     if rt.orchestrator is not None:
         try:
-            await rt.orchestrator.telegram.send_notification(
-                "🛑 Deriv AI Bot shutting down.", force=True
+            tg = rt.orchestrator.telegram
+            bal = (
+                rt.client.get_balance()
+                if rt.client is not None
+                else None
+            )
+            cur = (
+                rt.client.get_currency()
+                if rt.client is not None
+                else "USD"
+            )
+            await tg.send_notification(
+                tg.format_system(
+                    "🛑 Bot shutting down",
+                    ["Service stopping cleanly."],
+                    balance=bal,
+                    currency=cur,
+                ),
+                force=True,
             )
             await rt.orchestrator.telegram.stop_bot()
         except Exception as e:

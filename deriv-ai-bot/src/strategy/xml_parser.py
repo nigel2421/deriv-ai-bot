@@ -84,12 +84,16 @@ def _parse_strategy_elem(strategy_elem: ET.Element) -> Dict[str, Any]:
         "default_barrier": _require_int(
             strategy_elem, "default_barrier", 4, required=False
         ),
-        # Fixed digit barriers (preferred over AI-picked barriers)
+        # Fallback barriers when barrier_mode=fixed (adaptive is default)
         "over_barrier": _require_int(
             strategy_elem, "over_barrier", 6, required=False
         ),
         "under_barrier": _require_int(
             strategy_elem, "under_barrier", 4, required=False
+        ),
+        # adaptive | fixed | random
+        "barrier_mode": (
+            (_elem_text(strategy_elem, "barrier_mode") or "adaptive").strip().lower()
         ),
     }
     # Optional multiplier for martingale (default classic 2x)
@@ -119,18 +123,30 @@ class XMLStrategyParser:
 
             global_elem = root.find("global")
             if global_elem is not None:
+                max_daily = _require_float(
+                    global_elem, "max_daily_loss_pct", 5.0
+                )
                 config["global"] = {
                     "min_confidence": _require_float(
                         global_elem, "min_confidence", 0.75
                     ),
-                    "max_daily_loss_pct": _require_float(
-                        global_elem, "max_daily_loss_pct", 5.0
+                    "max_daily_loss_pct": max_daily,
+                    "session_stop_loss_pct": _require_float(
+                        global_elem, "session_stop_loss_pct", max_daily
+                    ),
+                    "session_target_rr": _require_float(
+                        global_elem, "session_target_rr", 3.0
                     ),
                     "max_consecutive_losses": _require_int(
                         global_elem, "max_consecutive_losses", 6
                     ),
                     "trade_pause_minutes": _require_int(
                         global_elem, "trade_pause_minutes", 60
+                    ),
+                    "stake_mode": (
+                        (_elem_text(global_elem, "stake_mode") or "flat")
+                        .strip()
+                        .lower()
                     ),
                 }
             else:

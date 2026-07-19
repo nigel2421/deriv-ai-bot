@@ -7,13 +7,17 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.strategy.barrier_picker import adaptive_barrier
+from src.strategy.contract_types import (
+    is_rise_fall,
+    normalize_contract_type,
+    requires_barrier,
+    validate_contract,
+)
 from src.strategy.digit_contracts import (
     DEFAULT_OVER_BARRIER,
     DEFAULT_UNDER_BARRIER,
     normalize_barrier,
-    normalize_contract_type,
-    requires_barrier,
-    validate_digit_contract,
 )
 from src.strategy.martingale import MartingaleStrategy
 from src.strategy.zuno_strategy import ZunoStrategy
@@ -32,9 +36,11 @@ class MarketRuntime:
         self.base_stake = float(cfg.get("base_stake", 1.0))
         self.allowed_types: List[str] = list(cfg.get("contract_types") or [])
         self.default_barrier = int(cfg.get("default_barrier", 4))
-        # Fixed strategy barriers: OVER@6 (win 7-9), UNDER@4 (win 0-3)
+        # Fallback / fixed-mode barriers (adaptive is default)
         self.over_barrier = int(cfg.get("over_barrier", DEFAULT_OVER_BARRIER))
         self.under_barrier = int(cfg.get("under_barrier", DEFAULT_UNDER_BARRIER))
+        # adaptive | fixed | random — adaptive picks barrier from ticks + prediction
+        self.barrier_mode = str(cfg.get("barrier_mode") or "adaptive").strip().lower()
         self.duration = int(cfg.get("duration", 5))
 
         self.martingale: Optional[MartingaleStrategy] = None
@@ -78,17 +84,15 @@ class MarketRuntime:
         self,
         signal_type: Optional[str],
         signal_barrier: Optional[int],
+        *,
+        predicted_digit: Optional[int] = None,
+        ticks: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Optional[str], Optional[int]]:
         """
         Choose contract type + barrier for the next trade.
 
-        Priority:
-          1. Zuno current type when zuno-enabled
-          2. AI signal type (filtered by allowed contract_types)
-          3. First allowed type / default
-
-        Barriers are normalized to Deriv-valid ranges (OVER 0–8, UNDER 1–9).
-        EVEN/ODD never carry a barrier.
+        Barriers for OVER/UNDER use adaptive picker by default (recent digits +
+        prediction), not fixed 6/4. EVEN/ODD and CALL/PUT have no barrier.
         """
         contract_type: Optional[str] = None
         barrier: Optional[int] = signal_barrier
@@ -125,12 +129,29 @@ class MarketRuntime:
                     allowed_norm,
                 )
 
-        if requires_barrier(contract_type):
-            # Strategy-fixed barriers take priority (user params OVER 6 / UNDER 4)
-            if contract_type == "DIGITOVER":
-                barrier = self.over_barrier
-            elif contract_type == "DIGITUNDER":
-                barrier = self.under_barrier
+        barrier_meta: Dict[str, Any] = {}
+        if is_rise_fall(contract_type):
+            barrier = None
+        elif requires_barrier(contract_type):
+            if contract_type in {"DIGITOVER", "DIGITUNDER"}:
+                # Prefer adaptive barrier; signal_barrier is a soft hint only
+                barrier, barrier_meta = adaptive_barrier(
+                    contract_type,
+                    predicted_digit=predicted_digit,
+                    ticks=ticks,
+                    mode=self.barrier_mode,
+                    fixed_over=self.over_barrier,
+                    fixed_under=self.under_barrier,
+                )
+                # If adaptive failed, fall back to signal then fixed
+                if barrier is None and signal_barrier is not None:
+                    barrier = normalize_barrier(contract_type, signal_barrier)
+                if barrier is None:
+                    barrier = (
+                        self.over_barrier
+                        if contract_type == "DIGITOVER"
+                        else self.under_barrier
+                    )
             elif barrier is None:
                 barrier = self.default_barrier
             barrier = normalize_barrier(
@@ -139,10 +160,20 @@ class MarketRuntime:
                 default_over=self.over_barrier,
                 default_under=self.under_barrier,
             )
+            if barrier_meta:
+                logger.info(
+                    "%s barrier %s@%s mode=%s emp_wr=%s pred=%s",
+                    self.symbol,
+                    contract_type,
+                    barrier,
+                    barrier_meta.get("mode"),
+                    barrier_meta.get("win_rate"),
+                    barrier_meta.get("pred"),
+                )
         else:
             barrier = None
 
-        ok, reason, barrier = validate_digit_contract(contract_type, barrier)
+        ok, reason, barrier = validate_contract(contract_type, barrier)
         if not ok:
             logger.error(
                 "%s invalid contract after resolve: %s %s (%s)",
@@ -174,6 +205,7 @@ class MarketRuntime:
             "allowed_types": self.allowed_types,
             "over_barrier": self.over_barrier,
             "under_barrier": self.under_barrier,
+            "barrier_mode": self.barrier_mode,
         }
 
 
@@ -201,6 +233,9 @@ class StrategyEngine:
         signal_type: Optional[str],
         signal_barrier: Optional[int],
         confidence: float,
+        *,
+        predicted_digit: Optional[int] = None,
+        ticks: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Merge AI signal with strategy rules → trade intent dict, or None to skip.
@@ -212,7 +247,12 @@ class StrategyEngine:
             )
             return None
 
-        contract_type, barrier = runtime.resolve_contract(signal_type, signal_barrier)
+        contract_type, barrier = runtime.resolve_contract(
+            signal_type,
+            signal_barrier,
+            predicted_digit=predicted_digit,
+            ticks=ticks,
+        )
         if not contract_type:
             return None
 
@@ -230,6 +270,8 @@ class StrategyEngine:
             "base_stake": runtime.base_stake,
             "stake": stake,
             "duration": runtime.duration,
+            "predicted_digit": predicted_digit,
+            "barrier_mode": runtime.barrier_mode,
             "strategy_snapshot": runtime.snapshot(),
         }
 

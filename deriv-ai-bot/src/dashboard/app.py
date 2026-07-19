@@ -36,6 +36,12 @@ st.set_page_config(
 st.title("📈 Deriv AI Trading Bot — Local Dashboard")
 st.caption(f"Project root: `{ROOT}` · {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
+st.info(
+    "**Live controls** (stake, session stop-loss 5–10%, 1:3 target, DeepSeek analyze) "
+    "are on the Cloud/HTTP dashboard (`python -m uvicorn src.cloud_app:app`). "
+    "Set `DEEPSEEK_API_KEY` and see `skills/deepseek-trading/SKILL.md`."
+)
+
 
 def _load_json(path: Path) -> dict:
     if not path.is_file():

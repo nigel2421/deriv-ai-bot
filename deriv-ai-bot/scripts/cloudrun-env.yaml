@@ -3,9 +3,48 @@ EXECUTE_TRADES: "true"
 PYTHONUNBUFFERED: "1"
 TF_CPP_MIN_LOG_LEVEL: "2"
 SAVE_TICK_HISTORY: "false"
-TICK_HISTORY_COUNT: "200"
-SYMBOLS: "R_10,R_25,R_50,R_75,R_100"
+TICK_HISTORY_COUNT: "500"
+# Focused symbols (learning quality > breadth)
+SYMBOLS: "R_25,R_50,1HZ50V,R_10"
 DERIV_API_MODE: "auto"
-MAX_OPEN_TRADES: "3"
-MAX_STAKE_PCT: "3.0"
+MAX_OPEN_TRADES: "1"
+# Risk 0.5–1.5% per trade (flat stake — no martingale)
+MAX_STAKE_PCT: "1.0"
+MAX_STAKE: "5"
+MIN_STAKE: "0.35"
+BASE_STAKE: "1.0"
 MIN_BALANCE: "5.0"
+STAKE_MODE: "flat"
+TRADE_CYCLE_SECONDS: "45"
+LEARNING_ALWAYS: "true"
+LEARNING_PATH: "data/learning_state.json"
+# Durable learning across revisions (set bucket + grant SA storage.objectAdmin):
+# LEARNING_GCS_URI: "gs://YOUR_BUCKET/deriv-bot/learning/"
+ENABLE_MINUTE_ENGINE: "true"
+MINUTE_DURATION: "2"
+# Unified with strategy.xml min_confidence (0.80) — all families
+MINUTE_MIN_CONFIDENCE: "0.80"
+MIN_CONFIDENCE: "0.80"
+MIN_NET_RETURN: "0.5"
+
+# Session stop-loss 5% / target 1:3 (stop when either hits) — keep flat stake
+SESSION_STOP_LOSS_PCT: "5.0"
+SESSION_TARGET_RR: "3.0"
+SESSION_STOP_ON_TARGET: "true"
+
+# Analytics gates — cold soft until 50 global closes, mature at 100
+ANALYTICS_GATE: "true"
+MIN_PATTERN_STRENGTH: "70"
+MIN_PATTERN_CLARITY: "65"
+MIN_EDGE_SCORE: "60"
+MIN_LIVE_EDGE: "65"
+MIN_QUALITY: "60"
+MIN_SAMPLE_SIZE: "100"
+COLD_START_EXIT_N: "50"
+MATURE_SAMPLE_N: "100"
+
+# DeepSeek advisor (key via Secret Manager — must be sk-… NOT AIzaSy…)
+DEEPSEEK_ENABLED: "true"
+DEEPSEEK_MODEL: "deepseek-v4-flash"
+DEEPSEEK_BASE_URL: "https://api.deepseek.com"
+DEEPSEEK_ANALYZE_EVERY: "5"
