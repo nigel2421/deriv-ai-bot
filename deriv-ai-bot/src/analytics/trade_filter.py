@@ -468,6 +468,15 @@ def evaluate_setup(
         if cold_allow:
             allow = True
 
+    # Market category → which scoring engine weights matter
+    market_profile: Dict[str, Any] = {}
+    try:
+        from src.strategy.market_categories import market_profile as _mprof
+
+        market_profile = _mprof(symbol or "")
+    except Exception:
+        market_profile = {}
+
     # --- Second system: Momentum + Persistence + Transition ---
     mp_analysis: Dict[str, Any] = {}
     try:
@@ -808,6 +817,17 @@ def evaluate_setup(
         "symbol": symbol,
         "contract_type": contract_type,
         "family": family,
+        "market_category": market_profile.get("category"),
+        "scoring_path": market_profile.get("scoring_path"),
+        "market_profile": {
+            "category": market_profile.get("category"),
+            "label": market_profile.get("label"),
+            "primary_metrics": market_profile.get("primary_metrics"),
+            "engine_weights": market_profile.get("engine_weights"),
+            "allowed_contracts": market_profile.get("allowed_contracts"),
+        }
+        if market_profile
+        else None,
     }
 
 

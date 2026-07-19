@@ -18,8 +18,8 @@ STAKE_MODE: "flat"
 TRADE_CYCLE_SECONDS: "45"
 LEARNING_ALWAYS: "true"
 LEARNING_PATH: "data/learning_state.json"
-# Durable learning across revisions (set bucket + grant SA storage.objectAdmin):
-# LEARNING_GCS_URI: "gs://YOUR_BUCKET/deriv-bot/learning/"
+# Durable learning across revisions (bucket + SA already provisioned)
+LEARNING_GCS_URI: "gs://trading-bots-502712-deriv-learning/learning/"
 ENABLE_MINUTE_ENGINE: "true"
 MINUTE_DURATION: "2"
 # Unified with strategy.xml min_confidence (0.80) — all families

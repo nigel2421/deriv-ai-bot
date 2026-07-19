@@ -111,11 +111,20 @@ async def status(_: Request) -> JSONResponse:
     import os as _os
     from config.settings import DEEPSEEK_API_KEY, DEEPSEEK_ENABLED, DEEPSEEK_MODEL
 
+    # Merge runtime advisor snapshot (recommendation / errors) with key config
+    runtime_ds = body.get("deepseek") if isinstance(body.get("deepseek"), dict) else {}
     body["deepseek"] = {
-        "enabled": bool(DEEPSEEK_ENABLED),
-        "configured": bool(DEEPSEEK_API_KEY),
-        "model": DEEPSEEK_MODEL,
-        "key_prefix": (str(DEEPSEEK_API_KEY)[:6] + "…") if DEEPSEEK_API_KEY else None,
+        **runtime_ds,
+        "enabled": bool(runtime_ds.get("enabled", DEEPSEEK_ENABLED)),
+        "configured": bool(DEEPSEEK_API_KEY) or bool(runtime_ds.get("ready")),
+        "model": runtime_ds.get("model") or DEEPSEEK_MODEL,
+        "key_prefix": (str(DEEPSEEK_API_KEY)[:6] + "…") if DEEPSEEK_API_KEY else runtime_ds.get("key_prefix"),
+        "ready": bool(runtime_ds.get("ready")),
+        "last_error": runtime_ds.get("last_error"),
+        "recommendation": runtime_ds.get("recommendation"),
+        "type_multipliers": runtime_ds.get("type_multipliers") or {},
+        "analyze_every": runtime_ds.get("analyze_every"),
+        "closes_since_analysis": runtime_ds.get("closes_since_analysis"),
     }
     body["analytics_config"] = {
         "gate": _os.getenv("ANALYTICS_GATE", "true"),
@@ -321,31 +330,19 @@ async def control_deepseek_analyze(request: Request):
                 "recommendation": rec,
                 "deepseek": orch.deepseek.snapshot(),
                 "error": orch.deepseek.last_error,
+                "n_trades_sent": (rec or {}).get("_meta", {}).get("n_trades"),
             }
         )
+    # Always land back on dashboard with flash query so user sees result
     if rec is None:
         err = orch.deepseek.last_error or "no recommendation"
-        return HTMLResponse(
-            f"""<!doctype html><html><body style="font-family:system-ui;background:#0b1220;color:#e8eefc;padding:2rem">
-            <h1>DeepSeek analysis failed</h1>
-            <p class="bad">{err}</p>
-            <p class="muted">Set <code>DEEPSEEK_API_KEY</code> in the environment.</p>
-            <p><a href="/" style="color:#7eb6ff">Dashboard</a></p>
-            </body></html>""",
-            status_code=400,
+        from urllib.parse import quote
+
+        return RedirectResponse(
+            url=f"/?ds=fail&ds_err={quote(str(err)[:200])}",
+            status_code=303,
         )
-    summary = rec.get("summary") or "ok"
-    score = rec.get("risk_score")
-    return HTMLResponse(
-        f"""<!doctype html><html><body style="font-family:system-ui;background:#0b1220;color:#e8eefc;padding:2rem">
-        <h1>🧠 DeepSeek recommendation</h1>
-        <p>Risk score: <b>{score}</b></p>
-        <p>{summary}</p>
-        <p><a href="/" style="color:#7eb6ff">Dashboard</a> ·
-           <a href="/status" style="color:#7eb6ff">/status</a></p>
-        <meta http-equiv="refresh" content="4;url=/"/>
-        </body></html>"""
-    )
+    return RedirectResponse(url="/?ds=ok", status_code=303)
 
 
 def _public_base(request: Request) -> str:
@@ -496,10 +493,25 @@ def _fmt_trade_rows(trades: list, *, open_mode: bool = False) -> str:
     return "".join(rows)
 
 
-async def root(_: Request) -> HTMLResponse:
+async def root(request: Request) -> HTMLResponse:
     s = runtime.public_status()
     risk = s.get("risk") or {}
     status_cls = "ok" if s.get("status") == "running" else "bad"
+    # Market + contract selectors for multi-card views
+    tracked = list(s.get("symbols") or [])
+    q_market = (request.query_params.get("market") or request.query_params.get("symbol") or "").strip()
+    q_contract = (request.query_params.get("contract") or "").strip().upper()
+    if q_market and q_market in tracked:
+        selected_market = q_market
+    elif tracked:
+        selected_market = tracked[0]
+    else:
+        selected_market = "R_25"
+    hpp_contracts = ["DIGITDIFF", "DIGITMATCH", "DIGITEVEN", "DIGITODD", "DIGITOVER", "DIGITUNDER", "CALL", "PUT"]
+    if q_contract and q_contract in hpp_contracts:
+        selected_contract = q_contract
+    else:
+        selected_contract = "DIGITDIFF"
     err_html = (
         f"<p class='bad'>Error: {s.get('last_error')}</p>" if s.get("last_error") else ""
     )
@@ -542,10 +554,47 @@ async def root(_: Request) -> HTMLResponse:
     pnl = risk.get("daily_pnl")
     pnl_cls = "ok" if pnl is not None and float(pnl) >= 0 else "bad"
     ds = s.get("deepseek") or {}
+    # Prefer orchestrator snapshot if public_status nested it under risk/learning paths
+    if runtime.orchestrator is not None:
+        try:
+            live_ds = runtime.orchestrator.deepseek.snapshot()
+            if live_ds:
+                ds = {**ds, **live_ds}
+        except Exception:
+            pass
     ds_rec = ds.get("recommendation") or {}
-    ds_summary = ds_rec.get("summary") or ("not run yet" if not ds.get("ready") else "ready — click Analyze")
+    ds_summary = ds_rec.get("summary") or (
+        "not run yet — click Analyze (works with 0 trades; better after ~10–20 closes)"
+        if not ds.get("ready")
+        else "ready — click Analyze"
+    )
     ds_score = ds_rec.get("risk_score")
-    ds_ready = "ready" if ds.get("ready") else "no API key"
+    ds_ready = "ready" if (ds.get("ready") or ds.get("configured")) else "no API key"
+    ds_err = ds.get("last_error")
+    ds_flash = (request.query_params.get("ds") or "").strip().lower()
+    ds_flash_err = (request.query_params.get("ds_err") or "").strip()
+    ds_n = (ds_rec.get("_meta") or {}).get("n_trades")
+    ds_hints = ds_rec.get("learning_hints") or ds_rec.get("strategy_changes") or []
+    ds_hints_html = "".join(f"<li>{h}</li>" for h in list(ds_hints)[:6])
+    ds_types = ds_rec.get("trade_type_analysis") or []
+    ds_types_html = "".join(
+        f"<li><code>{(t or {}).get('symbol') or '—'}</code> "
+        f"{(t or {}).get('contract_type')} · <b>{(t or {}).get('verdict')}</b> — "
+        f"{(t or {}).get('reason')}</li>"
+        for t in ds_types[:8]
+        if isinstance(t, dict)
+    )
+    ds_banner = ""
+    if ds_flash == "ok":
+        ds_banner = (
+            "<div class='card' style='border-color:#1f6f4a'>"
+            "<p class='ok'><b>DeepSeek analysis complete.</b> Results are on this page below.</p></div>"
+        )
+    elif ds_flash == "fail":
+        ds_banner = (
+            f"<div class='card' style='border-color:#6b2d2d'>"
+            f"<p class='bad'><b>DeepSeek failed:</b> {ds_flash_err or ds_err or 'unknown'}</p></div>"
+        )
     stop_hit = risk.get("session_stop_hit")
     tgt_hit = risk.get("session_target_hit")
     analytics = s.get("analytics") or {}
@@ -557,21 +606,62 @@ async def root(_: Request) -> HTMLResponse:
     sess = analytics.get("session") or {}
     mg = analytics.get("martingale_safety") or {}
     risk_sug = analytics.get("risk_suggestion") or {}
-    # Build edge rank rows
+    market_book = analytics.get("market_book") or {}
+    mb_profiles = market_book.get("profiles") or {}
+    mb_cats = market_book.get("categories") or []
+    # Per-selected-market category line
+    sel_prof = mb_profiles.get(selected_market) or {}
+    market_book_html = (
+        f"<p class='muted'>Selected <code>{selected_market}</code> → "
+        f"<b>{sel_prof.get('label') or sel_prof.get('category') or '—'}</b> · "
+        f"path <code>{sel_prof.get('scoring_path') or '—'}</code> · "
+        f"metrics: {', '.join(sel_prof.get('primary_metrics') or []) or '—'}</p>"
+        f"<p class='muted'>Allowed contracts: "
+        f"{', '.join(f'<code>{c}</code>' for c in (sel_prof.get('allowed_contracts') or [])) or '—'}</p>"
+        "<table><thead><tr><th>Category</th><th>Path</th><th>Primary metrics</th><th>Contracts</th></tr></thead><tbody>"
+        + (
+            "".join(
+                f"<tr><td>{c.get('label')}</td><td><code>{c.get('path')}</code></td>"
+                f"<td class='muted' style='font-size:0.8rem'>{c.get('metrics')}</td>"
+                f"<td class='muted' style='font-size:0.8rem'>{c.get('contracts')}</td></tr>"
+                for c in mb_cats
+            )
+            or "<tr><td colspan='4' class='muted'>Category table loads after first status cycle.</td></tr>"
+        )
+        + "</tbody></table>"
+    )
+    # Build edge rank rows (highlight selected market) — self-optimizing scanner
     rank_rows = "".join(
-        f"<tr><td>{i+1}</td><td><code>{r.get('symbol')}</code></td>"
+        f"<tr class=\"{'sel' if r.get('symbol')==selected_market else ''}\">"
+        f"<td>{i+1}</td><td><code>{r.get('symbol')}</code></td>"
+        f"<td class='muted' style='font-size:0.75rem'>{r.get('category') or '—'}</td>"
+        f"<td><b>{r.get('tier') or '—'}</b></td>"
         f"<td>{r.get('best_type') or '—'}</td>"
-        f"<td><b>{r.get('score')}</b></td>"
-        f"<td>{r.get('live_edge')}</td>"
-        f"<td>{r.get('pattern_strength')}</td>"
-        f"<td class=\"{'ok' if r.get('allow') else 'muted'}\">{r.get('recommendation')}</td></tr>"
-        for i, r in enumerate(ranked[:5])
-    ) or "<tr><td colspan='7' class='muted'>Waiting for ticks…</td></tr>"
-    # Heatmap for first symbol
-    heat_html = "<p class='muted'>No digit data yet.</p>"
-    if heatmaps:
-        sym0 = next(iter(heatmaps))
-        snap = heatmaps[sym0]
+        f"<td><b>{r.get('opportunity_score') or r.get('score')}</b></td>"
+        f"<td>{r.get('opportunity_velocity') if r.get('opportunity_velocity') is not None else '—'}</td>"
+        f"<td>{r.get('pattern_clarity') or r.get('pattern_strength')}</td>"
+        f"<td class=\"{'ok' if r.get('tradeable') or r.get('allow') else 'muted'}\">"
+        f"{'TRADE' if r.get('tradeable') else (r.get('recommendation') or '—')}</td></tr>"
+        for i, r in enumerate(ranked[:10])
+    ) or "<tr><td colspan='9' class='muted'>Waiting for ticks…</td></tr>"
+    scan_display = scan.get("display") or []
+    scan_lines = "".join(f"<li><code>{ln}</code></li>" for ln in scan_display[:8])
+    pri = scan.get("priority_book") or {}
+    scan_report = (scan.get("last_report") or {}).get("display") or ""
+    tiers = scan.get("tiers") or {}
+    tier_html = (
+        f"<p class='muted'>ELITE: {', '.join(tiers.get('ELITE') or ['—'])} · "
+        f"STRONG: {', '.join(tiers.get('STRONG') or ['—'])} · "
+        f"WATCH: {', '.join(tiers.get('WATCHLIST') or ['—'])} · "
+        f"IGNORE: {', '.join((tiers.get('IGNORE') or [])[:4]) or '—'}</p>"
+    )
+    # Heatmap for selected market
+    heat_html = "<p class='muted'>No digit data yet for this market.</p>"
+    snap = heatmaps.get(selected_market) if heatmaps else None
+    if not snap and heatmaps:
+        # fallback first available
+        snap = heatmaps.get(next(iter(heatmaps)))
+    if snap:
         w100 = ((snap.get("heatmap") or {}).get("windows") or {}).get("100") or {}
         table = w100.get("table") or []
         heat_rows = "".join(
@@ -580,26 +670,56 @@ async def root(_: Request) -> HTMLResponse:
             for row in table
         )
         heat_html = (
-            f"<p class='muted'><code>{sym0}</code> · last 100 ticks · "
+            f"<p class='muted'><code>{selected_market}</code> · last 100 ticks · "
             f"hot {w100.get('hot')} · cold {w100.get('cold')}</p>"
             f"<table><thead><tr><th>Digit</th><th>Share</th><th>Count</th></tr></thead>"
             f"<tbody>{heat_rows}</tbody></table>"
         )
-    # Probability table
-    prob_html = "<p class='muted'>No probability table yet.</p>"
-    if probs:
-        symp = next(iter(probs))
-        prow = (probs[symp].get("rows") or [])[:6]
+    # Probability table for selected market
+    prob_html = "<p class='muted'>No probability table yet for this market.</p>"
+    prow_src = (probs.get(selected_market) if probs else None) or (
+        probs.get(next(iter(probs))) if probs else None
+    )
+    if prow_src:
+        prow = (prow_src.get("rows") or [])[:8]
         prob_rows = "".join(
             f"<tr><td>{r.get('trade_type')}</td>"
             f"<td>{(float(r.get('confidence') or 0)*100):.0f}%</td></tr>"
             for r in prow
         )
         prob_html = (
-            f"<p class='muted'><code>{symp}</code></p>"
+            f"<p class='muted'><code>{selected_market}</code></p>"
             f"<table><thead><tr><th>Trade type</th><th>Confidence</th></tr></thead>"
             f"<tbody>{prob_rows}</tbody></table>"
         )
+    # Market selector HTML options
+    market_opts = "".join(
+        f"<option value=\"{m}\" {'selected' if m==selected_market else ''}>{m}</option>"
+        for m in (tracked or [selected_market])
+    )
+    contract_opts = "".join(
+        f"<option value=\"{c}\" {'selected' if c==selected_contract else ''}>{c}</option>"
+        for c in hpp_contracts
+    )
+    # Strategy detail for selected market
+    strat_sel = (strats.get(selected_market) if strats else None) or {}
+    strat_types = strat_sel.get("allowed_types") or []
+    sel_cat = (mb_profiles.get(selected_market) or {}) if mb_profiles else {}
+    # mb_profiles may not exist yet if market_book_html block order differs — recompute safely
+    try:
+        from src.strategy.market_categories import market_profile as _mp
+
+        sel_cat = _mp(selected_market)
+    except Exception:
+        sel_cat = sel_cat or {}
+    strat_detail = (
+        f"<p class='muted'><code>{selected_market}</code> · category <b>{sel_cat.get('label') or '—'}</b> · "
+        f"path <code>{sel_cat.get('scoring_path') or '—'}</code> · "
+        f"type <b>{strat_sel.get('type') or '—'}</b> · "
+        f"tradeable <b>{'yes' if strat_sel.get('tradeable') else 'no'}</b></p>"
+        f"<p class='muted'>Engine metrics: {', '.join(sel_cat.get('primary_metrics') or []) or '—'}</p>"
+        f"<p class='muted'>Contracts: {', '.join(f'<code>{t}</code>' for t in strat_types) or '—'}</p>"
+    )
     filt_rec = filt.get("recommendation") or "—"
     filt_cond = filt.get("market_condition") or "—"
     filt_edge = filt.get("expected_edge") or "—"
@@ -649,16 +769,18 @@ async def root(_: Request) -> HTMLResponse:
             f"{(risk_sug.get('risk_plan') or {}).get('risk_pct')}% "
             f"({(risk_sug.get('risk_plan') or {}).get('reason')})</p>"
         )
-    # Rolling entropy regime card
+    # Rolling entropy regime card (selected market)
     roll_map = analytics.get("rolling_entropy") or {}
     roll0 = {}
-    roll_sym = "—"
-    if roll_map:
+    roll_sym = selected_market
+    if roll_map.get(selected_market):
+        roll0 = roll_map[selected_market] or {}
+    elif roll_map:
         roll_sym = next(iter(roll_map))
         roll0 = roll_map[roll_sym] or {}
     elif (filt.get("rolling_entropy") or {}):
         roll0 = filt.get("rolling_entropy") or {}
-        roll_sym = filt.get("symbol") or "—"
+        roll_sym = filt.get("symbol") or selected_market
     prim = roll0.get("primary") or {}
     roll_windows = roll0.get("windows") or {}
     win_rows = "".join(
@@ -666,15 +788,16 @@ async def root(_: Request) -> HTMLResponse:
         f"<td>{(v or {}).get('compression_pct')}%</td>"
         f"<td>{(v or {}).get('velocity')}</td>"
         f"<td>{(v or {}).get('regime')}</td></tr>"
-        for k, v in sorted(roll_windows.items(), key=lambda x: int(x[0]))
+        for k, v in sorted(roll_windows.items(), key=lambda x: int(x[0]) if str(x[0]).isdigit() else 0)
     ) or "<tr><td colspan='5' class='muted'>Waiting for ticks…</td></tr>"
 
-    # ----- HPP time series dashboard -----
+    # ----- HPP time series dashboard (selected contract) -----
     hpp_bundle = analytics.get("hpp_timeseries") or {}
-    hpp_primary = hpp_bundle.get("primary") or {}
-    if not hpp_primary and hpp_bundle.get("contracts"):
-        hpp_primary = next(iter((hpp_bundle.get("contracts") or {}).values()), {}) or {}
-    hpp_ct = hpp_primary.get("contract") or "DIGITDIFF"
+    hpp_boards = hpp_bundle.get("contracts") or {}
+    hpp_primary = hpp_boards.get(selected_contract) or hpp_bundle.get("primary") or {}
+    if not hpp_primary and hpp_boards:
+        hpp_primary = next(iter(hpp_boards.values()), {}) or {}
+    hpp_ct = hpp_primary.get("contract") or selected_contract
     meta = hpp_primary.get("meta") or {}
     series = hpp_primary.get("series") or {}
     hpp_vals = series.get("hpp") or []
@@ -770,6 +893,16 @@ async def root(_: Request) -> HTMLResponse:
     td {{ padding: 0.5rem 0.35rem; border-bottom: 1px solid #1a2438; vertical-align: top; }}
     tr:hover td {{ background: rgba(126,182,255,.06); }}
     .btnrow {{ display:flex; flex-wrap:wrap; gap:0.65rem; align-items:center; }}
+    tr.sel {{ background: rgba(126,182,255,0.12); }}
+    .market-bar {{ display:flex; flex-wrap:wrap; gap:0.75rem 1.25rem; align-items:flex-end;
+      background:#101827; border:1px solid #24304d; border-radius:12px; padding:0.9rem 1.1rem; margin-bottom:1rem; }}
+    .market-bar label {{ display:block; font-size:0.72rem; color:#9bb0d3; margin-bottom:0.25rem; }}
+    .market-bar select {{ background:#0b1220; color:#e8eefc; border:1px solid #2a3f6b; border-radius:8px;
+      padding:0.45rem 0.65rem; min-width:9rem; font-size:0.95rem; }}
+    .market-bar .hint {{ color:#9bb0d3; font-size:0.8rem; flex:1; min-width:12rem; }}
+    .pill {{ display:inline-block; background:#1a2744; color:#9bb0d3; border-radius:999px;
+      padding:0.15rem 0.55rem; font-size:0.75rem; margin-right:0.25rem; }}
+    .pill.on {{ background:#1f4d7a; color:#dcecff; }}
     .btn {{ color:#fff !important; padding:0.55rem 1rem; border-radius:8px; text-decoration:none; font-weight:600;
             border:none; cursor:pointer; font-size:0.95rem; }}
     .btn-go {{ background:#1f6f4a; }}
@@ -783,16 +916,53 @@ async def root(_: Request) -> HTMLResponse:
     .bar {{ height:8px; background:#0b1220; border-radius:99px; overflow:hidden; margin-top:0.35rem; }}
     .bar > i {{ display:block; height:100%; background:#3ddc97; }}
     .bar.bad > i {{ background:#ff6b6b; }}
+    tr.sel {{ background: rgba(126,182,255,0.12); }}
+    .market-bar {{ display:flex; flex-wrap:wrap; gap:0.75rem 1.25rem; align-items:flex-end;
+      background:#101827; border:1px solid #24304d; border-radius:12px; padding:0.9rem 1.1rem; margin-bottom:1rem; }}
+    .market-bar label {{ display:block; font-size:0.72rem; color:#9bb0d3; margin-bottom:0.25rem; }}
+    .market-bar select {{ background:#0b1220; color:#e8eefc; border:1px solid #2a3f6b; border-radius:8px;
+      padding:0.45rem 0.65rem; min-width:9rem; font-size:0.95rem; width:auto; }}
+    .market-bar .hint {{ color:#9bb0d3; font-size:0.8rem; flex:1; min-width:12rem; }}
+    .pill {{ display:inline-block; background:#1a2744; color:#9bb0d3; border-radius:999px;
+      padding:0.15rem 0.55rem; font-size:0.75rem; margin-right:0.25rem; }}
+    .pill.on {{ background:#1f4d7a; color:#dcecff; }}
   </style>
-  <meta http-equiv="refresh" content="15"/>
+  <meta http-equiv="refresh" content="15;url=/?market={selected_market}&amp;contract={selected_contract}"/>
 </head>
 <body>
+  {ds_banner}
+  <div class="market-bar">
+    <form method="get" action="/" id="market-form" style="display:flex;flex-wrap:wrap;gap:0.75rem 1.25rem;align-items:flex-end;width:100%">
+      <div>
+        <label for="market">Tracked market</label>
+        <select id="market" name="market" onchange="this.form.submit()">
+          {market_opts}
+        </select>
+      </div>
+      <div>
+        <label for="contract">HPP contract</label>
+        <select id="contract" name="contract" onchange="this.form.submit()">
+          {contract_opts}
+        </select>
+      </div>
+      <div class="hint">
+        Viewing <b>{selected_market}</b> · HPP <b>{selected_contract}</b><br/>
+        Heatmap, probability, entropy &amp; strategy detail follow this market.
+        Edge scanner ranks all markets. HPP uses the contract dropdown.
+        <div style="margin-top:0.35rem">
+          {"".join(f"<span class='pill {'on' if m==selected_market else ''}'>{m}</span>" for m in (tracked or []))}
+        </div>
+      </div>
+    </form>
+  </div>
+
   <div class="card">
     <h1>Deriv AI Bot</h1>
     <p class="muted">Auto-refresh 15s · API <code>{DERIV_API_MODE}</code>
        · stake <code>{s.get('stake_mode') or 'flat'}</code>
        · minutes <code>{'on' if s.get('enable_minute') else 'off'} ({s.get('minute_duration') or 2}m)</code>
        · DeepSeek <code>{ds_ready}</code>
+       · market <code>{selected_market}</code>
     </p>
     <div class="grid">
       <div class="stat"><div class="label">Status</div>
@@ -831,7 +1001,7 @@ async def root(_: Request) -> HTMLResponse:
 
   <div class="card">
     <h2>HPP time series — is the edge growing or dying?</h2>
-    <p class="muted">Contract <code>{hpp_ct}</code> · lifecycle <b>{lifecycle}</b> ·
+    <p class="muted">Contract <code>{hpp_ct}</code> (dropdown) · market view <code>{selected_market}</code> · lifecycle <b>{lifecycle}</b> ·
        Meta-HPP <b>{meta.get('meta_hpp', '—')}</b> · {meta_status} ·
        conf {meta.get('confidence', '—')} ·
        weight adj {meta.get('recommended_weight_change_pct', 0):+.0f}%</p>
@@ -884,8 +1054,8 @@ async def root(_: Request) -> HTMLResponse:
   </div>
 
   <div class="card">
-    <h2>Entropy regime (rolling)</h2>
-    <p class="muted">Symbol <code>{roll_sym}</code> · updates with tick windows 25/50/100/200/500</p>
+    <h2>Entropy regime (rolling) — {selected_market}</h2>
+    <p class="muted">Symbol <code>{roll_sym}</code> · updates with tick windows 25/50/100/200/500 · switch market above</p>
     <div class="grid">
       <div class="stat"><div class="label">Market regime</div>
         <div class="val">{roll0.get('regime') or prim.get('regime') or '—'}</div></div>
@@ -960,26 +1130,38 @@ async def root(_: Request) -> HTMLResponse:
   </div>
 
   <div class="card">
-    <h2>Edge scanner — best opportunity now</h2>
+    <h2>Market Opportunity Ranking (MOR)</h2>
+    <p class="muted">Not “is this trade good?” — <b>where is the best edge across all markets right now?</b><br/>
+       Score = strength/clarity/HPP/velocity/MP/regime/EV/conf − risk penalties.
+       Trade only ELITE/STRONG + Edge≥80 · Clarity≥75 · HPP≥75 · MP≥70 · EV&gt;0.</p>
+    {tier_html}
     <div style="overflow-x:auto">
     <table>
       <thead><tr>
-        <th>#</th><th>Index</th><th>Type</th><th>Score</th>
-        <th>Live edge</th><th>Pattern</th><th>Rec</th>
+        <th>#</th><th>Index</th><th>Category</th><th>Tier</th><th>Type</th>
+        <th>Opp score</th><th>Opp vel</th><th>Clarity</th><th>Gate</th>
       </tr></thead>
       <tbody>{rank_rows}</tbody>
     </table>
     </div>
+    <ul style="margin-top:0.75rem">{scan_lines or "<li class='muted'>Scanner fills after first status cycle.</li>"}</ul>
+    {f"<pre class='muted' style='white-space:pre-wrap;font-size:0.8rem'>{scan_report}</pre>" if scan_report else ""}
   </div>
 
   <div class="card">
-    <h2>Digit frequency heatmap (100 ticks)</h2>
+    <h2>Digit frequency heatmap (100 ticks) — {selected_market}</h2>
+    <p class="muted">Switch market with the dropdown at the top to inspect each tracked index.</p>
     {heat_html}
   </div>
 
   <div class="card">
-    <h2>Probability engine</h2>
+    <h2>Probability engine — {selected_market}</h2>
     {prob_html}
+  </div>
+
+  <div class="card">
+    <h2>Strategy on {selected_market}</h2>
+    {strat_detail}
   </div>
 
   <div class="card">
@@ -1097,18 +1279,39 @@ async def root(_: Request) -> HTMLResponse:
 
   <div class="card">
     <h2>DeepSeek advisor</h2>
-    <p class="muted">Analyzes trade types individually and feeds confidence multipliers into the learning curve.
-       Skill: <code>skills/deepseek-trading/SKILL.md</code></p>
-    <p>Risk score: <b>{ds_score if ds_score is not None else '—'}</b></p>
+    <p class="muted">Click <b>DeepSeek analyze</b> in Controls (or
+       <a href="/control/deepseek-analyze">run now</a>). Works with 0 trades (general advice);
+       much better after ~10–20 closed trades of real outcomes.</p>
+    <div class="grid">
+      <div class="stat"><div class="label">Status</div>
+        <div class="val {'ok' if ds_ready=='ready' else 'bad'}">{ds_ready}</div></div>
+      <div class="stat"><div class="label">Risk score</div>
+        <div class="val">{ds_score if ds_score is not None else '—'}</div></div>
+      <div class="stat"><div class="label">Trades in last run</div>
+        <div class="val">{ds_n if ds_n is not None else '—'}</div></div>
+      <div class="stat"><div class="label">Auto every N closes</div>
+        <div class="val">{ds.get('analyze_every') if ds.get('analyze_every') is not None else '5'}</div></div>
+    </div>
+    <p style="margin-top:0.85rem"><b>Summary</b></p>
     <p>{ds_summary}</p>
-    <p class="muted" style="font-size:0.85rem">Last error: {ds.get('last_error') or 'none'} ·
-       model <code>{ds.get('model') or '—'}</code></p>
+    <p class="muted" style="font-size:0.85rem">Last error: {ds_err or ds.get('last_error') or 'none'} ·
+       model <code>{ds.get('model') or '—'}</code> · key <code>{ds.get('key_prefix') or '—'}</code></p>
+    <p style="margin-top:0.75rem"><b>Trade-type verdicts</b></p>
+    <ul>{ds_types_html or "<li class='muted'>Run Analyze to populate (or wait for auto after closed trades).</li>"}</ul>
+    <p style="margin-top:0.75rem"><b>Hints / strategy changes</b></p>
+    <ul>{ds_hints_html or "<li class='muted'>—</li>"}</ul>
   </div>
 
   <div class="card">
     <h2>Strategy markets</h2>
     <p class="muted">Pro-trend: 50/200 EMA · RSI · structure · break/retest · Boom/Crash no-chase · digits + CALL/PUT · conf ≥ 80%</p>
     {strat_html}
+  </div>
+
+  <div class="card">
+    <h2>Market categories (scoring engines)</h2>
+    <p class="muted">Each market class uses a different metric stack. Synthetics keep entropy; forex/crypto use directional engines only.</p>
+    {market_book_html}
   </div>
 
   <div class="card">

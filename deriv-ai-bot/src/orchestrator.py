@@ -515,7 +515,17 @@ class TradingOrchestrator:
         min_conf_base = self.min_confidence
         phase = self.learner.cold_start_phase()
 
-        for symbol in self.active_symbols:
+        # Self-optimizing order: high PF / positive velocity markets first
+        try:
+            from src.analytics.market_scanner import get_priority_book
+
+            scan_symbols = get_priority_book().ordered_symbols(
+                list(self.active_symbols or [])
+            )
+        except Exception:
+            scan_symbols = list(self.active_symbols or [])
+
+        for symbol in scan_symbols:
             ticks = self.fetcher.get_recent_data(symbol, 120)
             if not ticks:
                 logger.debug("No ticks yet for %s", symbol)
@@ -534,9 +544,23 @@ class TradingOrchestrator:
                 for t in (normalize_contract_type(x) for x in allowed_raw)
                 if t
             ]
+            # Category-aware contracts: e.g. forex/crypto never scan digits
+            try:
+                from src.strategy.market_categories import (
+                    filter_allowed_for_symbol,
+                    market_profile,
+                )
+
+                mprof = market_profile(symbol)
+                if not allowed:
+                    allowed = list(mprof.get("allowed_contracts") or ["CALL", "PUT"])
+                else:
+                    allowed = filter_allowed_for_symbol(symbol, allowed) or allowed
+            except Exception:
+                mprof = {"category": "unknown", "scoring_path": "directional"}
             digit_allowed = [t for t in allowed if is_digit_contract(t)]
             rf_allowed = [t for t in allowed if is_rise_fall(t)]
-            # If allow-list empty, permit digits (incl. even/odd) + rise/fall
+            # If allow-list empty after filter, fall back to category defaults
             if not allowed:
                 digit_allowed = [
                     "DIGITOVER",
@@ -545,6 +569,18 @@ class TradingOrchestrator:
                     "DIGITODD",
                 ]
                 rf_allowed = ["CALL", "PUT"]
+                try:
+                    from src.strategy.market_categories import (
+                        SYNTHETIC_VOL,
+                        classify_market,
+                        allowed_contracts,
+                    )
+
+                    if classify_market(symbol) != SYNTHETIC_VOL:
+                        digit_allowed = []
+                        rf_allowed = sorted(allowed_contracts(classify_market(symbol)))
+                except Exception:
+                    pass
 
             candidates: list = []
 
@@ -637,6 +673,8 @@ class TradingOrchestrator:
                         )
                         if intent:
                             intent["family"] = "digits"
+                            intent["market_category"] = (mprof or {}).get("category")
+                            intent["scoring_path"] = (mprof or {}).get("scoring_path")
                             intent["raw_confidence"] = conf or raw_conf
                             intent["regime"] = dig_reg
                             intent["learn_bonus"] = self.learner.selection_bonus(
@@ -712,6 +750,8 @@ class TradingOrchestrator:
                         )
                         if intent:
                             intent["family"] = "rise_fall"
+                            intent["market_category"] = (mprof or {}).get("category")
+                            intent["scoring_path"] = (mprof or {}).get("scoring_path")
                             intent["raw_confidence"] = rf_conf
                             intent["trend"] = trend
                             intent["pro_trend"] = {
@@ -1322,6 +1362,24 @@ class TradingOrchestrator:
                     family=meta.get("family"),
                 )
                 self.anti_spiral.record(symbol, str(contract_type), is_win)
+                # Self-optimizing market scan priority + every-500 PF report
+                try:
+                    from src.analytics.market_scanner import get_priority_book
+
+                    rep = get_priority_book().record_trade(
+                        str(symbol),
+                        is_win=is_win,
+                        profit=float(profit),
+                        hpp_velocity=meta.get("hpp_velocity"),
+                        clarity=meta.get("pattern_clarity"),
+                    )
+                    if rep:
+                        logger.info(
+                            "Market scanner report (every 500):\n%s",
+                            rep.get("display"),
+                        )
+                except Exception as e:
+                    logger.debug("market priority record failed: %s", e)
             # Session recorder + hour/index analytics
             try:
                 self.session_analytics.record(
@@ -1652,11 +1710,11 @@ class TradingOrchestrator:
 
     def analytics_snapshot(self) -> Dict[str, Any]:
         """Digit heatmap, edge scan, filter, martingale safety, session insights."""
-        # Prefer first active symbol with ticks for display heatmap
+        # All active symbols so dashboard market dropdown can switch freely
         heat = {}
         probs = {}
-        for sym in list(self.active_symbols or [])[:3]:
-            ticks = self.fetcher.get_recent_data(sym, 120) if self.fetcher else []
+        for sym in list(self.active_symbols or []):
+            ticks = self.fetcher.get_recent_data(sym, 150) if self.fetcher else []
             if ticks:
                 heat[sym] = digit_snapshot(ticks)
                 probs[sym] = probability_table(ticks, symbol=sym)
@@ -1668,10 +1726,11 @@ class TradingOrchestrator:
                 k = f"{e.get('symbol')}|{e.get('contract_type')}"
                 hist_map.setdefault(k, []).append({"profit": e.get("profit")})
             scan = scan_markets(
-                list(self.active_symbols or [])[:8],
+                list(self.active_symbols or []),
                 lambda s: self.fetcher.get_recent_data(s, 120) if self.fetcher else [],
                 history_by_key=hist_map,
-                top_n=5,
+                top_n=10,
+                global_samples=self.learner.global_samples(),
             )
             self.last_scan = scan
         except Exception as e:
@@ -1705,7 +1764,7 @@ class TradingOrchestrator:
         try:
             from src.analytics.rolling_entropy import feed_ticks
 
-            for sym in list(self.active_symbols or [])[:6]:
+            for sym in list(self.active_symbols or []):
                 tks = self.fetcher.get_recent_data(sym, 500) if self.fetcher else []
                 if tks:
                     entropy_by_sym[sym] = feed_ticks(sym, tks)
@@ -1720,10 +1779,33 @@ class TradingOrchestrator:
             if not ts.points:
                 ts.capture_snapshot(reason="status")
             hpp_dash = ts.dashboard_bundle(
-                ["DIGITDIFF", "DIGITMATCH", "DIGITEVEN", "DIGITOVER", "CALL"]
+                [
+                    "DIGITDIFF",
+                    "DIGITMATCH",
+                    "DIGITEVEN",
+                    "DIGITODD",
+                    "DIGITOVER",
+                    "DIGITUNDER",
+                    "CALL",
+                    "PUT",
+                ]
             )
         except Exception as e:
             logger.debug("hpp timeseries dashboard failed: %s", e)
+
+        market_book = {}
+        try:
+            from src.strategy.market_categories import (
+                category_summary,
+                profiles_for_symbols,
+            )
+
+            market_book = {
+                "profiles": profiles_for_symbols(list(self.active_symbols or [])),
+                "categories": category_summary(),
+            }
+        except Exception as e:
+            logger.debug("market categories failed: %s", e)
 
         return {
             "gate_enabled": self.analytics_gate,
@@ -1737,6 +1819,7 @@ class TradingOrchestrator:
             "strategies": self.strategy_builder.list_strategies(),
             "rolling_entropy": entropy_by_sym,
             "hpp_timeseries": hpp_dash,
+            "market_book": market_book,
         }
 
     def _open_trade_details(self) -> list:

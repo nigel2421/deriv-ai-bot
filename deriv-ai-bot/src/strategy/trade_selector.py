@@ -59,6 +59,17 @@ class TradeSelector:
             key = f"{s.get('symbol')}|{str(s.get('contract_type') or '').upper()}"
             winner_bias = 0.04 if key in _WINNER_HINTS else 0.0
 
+            # Slight preference when scoring path matches contract family
+            cat_bias = 0.0
+            path = str(s.get("scoring_path") or "")
+            if path == "digits_and_rf" and family == "digits":
+                cat_bias = 0.01
+            if path in {"directional", "spike"} and family in {
+                "rise_fall",
+                "minute_rise_fall",
+            }:
+                cat_bias = 0.015
+
             # Penalize weak EV / rejected no-trade leftovers
             if s.get("no_trade") and not (s.get("no_trade") or {}).get("allow", True):
                 return -1.0
@@ -70,6 +81,7 @@ class TradeSelector:
                 + family_bias
                 + edge_bonus
                 + winner_bias
+                + cat_bias
             )
 
         best = max(signals, key=score)
