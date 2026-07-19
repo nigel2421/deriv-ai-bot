@@ -23,6 +23,7 @@ RUN pip install --upgrade pip \
 COPY config ./config
 COPY src ./src
 COPY scripts ./scripts
+COPY skills ./skills
 COPY .env.example ./.env.example
 
 RUN mkdir -p /app/data/logs /app/data/historical /app/data/training /app/src/models
