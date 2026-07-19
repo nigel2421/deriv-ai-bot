@@ -149,14 +149,10 @@ class TradingOrchestrator:
         # Telegram /resume also clears risk cooldown
         self.telegram.on_resume_hook = lambda: self.force_resume("telegram:/resume")
         self.telegram.on_pause_hook = lambda: self.force_pause("telegram:/pause", 60)
-        # Prefer env SYMBOLS; ensure strategy.xml markets are covered when listed
+        # Prefer env SYMBOLS only (focused learning). Do not auto-append all XML markets.
         xml_syms = self.parser.market_symbols()
         if SYMBOLS:
-            # Keep order from env; drop unknown only if xml has a strict list
             self.active_symbols = list(SYMBOLS)
-            for s in xml_syms:
-                if s not in self.active_symbols:
-                    self.active_symbols.append(s)
         else:
             self.active_symbols = xml_syms or list(SYMBOLS)
         self.max_open_trades = MAX_OPEN_TRADES
@@ -846,9 +842,9 @@ class TradingOrchestrator:
                             or ct in {"CALL", "PUT"}
                         ):
                             continue
-                    conf_sb = 0.82
+                    conf_sb = min_conf_base
                     adj = self.learner.adjust_confidence(symbol, ct, conf_sb)
-                    if adj < min_conf:
+                    if adj < min_conf_base:
                         continue
                     intent = self.strategy_engine.apply_signal(
                         symbol=symbol,
@@ -904,7 +900,7 @@ class TradingOrchestrator:
             logger.info(
                 "No signals ≥ %.0f%% confidence across %s markets "
                 "(anti_spiral=%s)",
-                min_conf * 100,
+                min_conf_base * 100,
                 len(self.active_symbols),
                 self.anti_spiral.snapshot(),
             )
