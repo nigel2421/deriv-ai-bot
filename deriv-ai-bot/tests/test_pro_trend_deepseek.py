@@ -82,7 +82,13 @@ def test_deepseek_parse_json_fenced():
 
 
 def test_deepseek_note_closed_trade_every_n():
-    adv = DeepSeekAdvisor(api_key="sk-test", enabled=True, analyze_every=3)
-    assert adv.note_closed_trade() is False
-    assert adv.note_closed_trade() is False
-    assert adv.note_closed_trade() is True
+    adv = DeepSeekAdvisor(
+        api_key="sk-test",
+        enabled=True,
+        analyze_every=3,
+        min_sample=3,
+        min_per_setup=99,  # only test global cadence
+    )
+    assert adv.note_closed_trade("R_10", "rise_fall", "CALL") is False
+    assert adv.note_closed_trade("R_10", "rise_fall", "CALL") is False
+    assert adv.note_closed_trade("R_10", "rise_fall", "CALL") is True

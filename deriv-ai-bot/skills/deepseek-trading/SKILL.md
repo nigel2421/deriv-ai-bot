@@ -137,15 +137,31 @@ Digits are **not** the same edge as CALL/PUT:
 - Prefer setups aligned with queue/parity stats only when confidence is high
 - Do **not** average digit performance with rise/fall performance
 
+## Sample policy (bot-enforced)
+
+The bot only spends tokens when samples are meaningful:
+
+| Gate | Default |
+|------|---------|
+| Global auto cadence | every **20** closed trades |
+| Min trades for global run | **20** |
+| Per market\|strategy bucket | **12** closes on that symbol+family |
+
+Prefer analyzing **market_strategy_buckets** (symbol + family + by_contract_type)
+over a flat list of 5 mixed trades. Recommendations must cite those buckets.
+
 ## What you receive as input
 
 JSON with:
 
-- `recent_trades` — status, symbol, contract_type, stake, profit, confidence, family
+- `market_strategy_buckets` — **primary**: per symbol + strategy family (`digits` /
+  `rise_fall` / `minute_rise_fall`) with n, wr, pnl, and `by_contract_type`
+- `recent_trades_tail` — thin fallback only
 - `learning` — per-key wins/losses/pnl/streaks
 - `risk_session` — stop-loss %, target amount, daily_pnl, max_stake_pct
 - `strategies` — market configs
 - `goals` — account-protection objectives
+- `scope_keys` — which buckets this run targets
 
 ## Output format (JSON only)
 
@@ -155,10 +171,11 @@ JSON with:
   "risk_score": 0,
   "trade_type_analysis": [
     {
-      "contract_type": "CALL",
       "symbol": "R_75",
+      "family": "rise_fall",
+      "contract_type": "CALL",
       "verdict": "keep|reduce|ban",
-      "reason": "why",
+      "reason": "cite n/wr/pnl from that market|strategy bucket",
       "suggested_confidence_mult": 1.0
     }
   ],

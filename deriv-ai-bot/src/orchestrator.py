@@ -8,6 +8,8 @@ from config.settings import (
     DEEPSEEK_API_KEY,
     DEEPSEEK_BASE_URL,
     DEEPSEEK_ENABLED,
+    DEEPSEEK_MIN_PER_SETUP,
+    DEEPSEEK_MIN_SAMPLE,
     DEEPSEEK_MODEL,
     DEEPSEEK_TIMEOUT_SEC,
     EXECUTE_TRADES,
@@ -130,6 +132,8 @@ class TradingOrchestrator:
             enabled=DEEPSEEK_ENABLED,
             timeout_sec=DEEPSEEK_TIMEOUT_SEC,
             analyze_every=DEEPSEEK_ANALYZE_EVERY,
+            min_sample=DEEPSEEK_MIN_SAMPLE,
+            min_per_setup=DEEPSEEK_MIN_PER_SETUP,
         )
         self.anti_spiral = AntiSpiral()
         # Skip duration/market-closed offers so we scan open markets instead
@@ -1731,10 +1735,14 @@ class TradingOrchestrator:
                     )
         except Exception:
             pass
-        # DeepSeek periodic analysis → updates type multipliers for learning curve
+        # DeepSeek: only when sample is meaningful (per market|strategy or global N)
         try:
-            if self.deepseek.note_closed_trade():
-                self._run_deepseek_analysis(source="auto")
+            if self.deepseek.note_closed_trade(
+                symbol=str(symbol or "") if symbol else None,
+                family=str(meta.get("family") or "") or None,
+                contract_type=str(contract_type or "") or None,
+            ):
+                self._run_deepseek_analysis(source="auto", force=False)
         except Exception as e:
             logger.debug("DeepSeek auto-analyze skipped: %s", e)
 
@@ -1829,16 +1837,42 @@ class TradingOrchestrator:
             "deepseek": self.deepseek.snapshot(),
         }
 
-    def _run_deepseek_analysis(self, source: str = "manual") -> Optional[Dict[str, Any]]:
-        """Analyze recent trades with DeepSeek and apply type multipliers."""
+    def _run_deepseek_analysis(
+        self, source: str = "manual", *, force: Optional[bool] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Analyze closed trades with DeepSeek (per market / per strategy buckets).
+
+        force=True for dashboard/manual; auto uses sample gates (default min 20
+        global or 12 on one market|strategy) to avoid wasting tokens.
+        """
+        if force is None:
+            force = source in {"manual", "dashboard"}
         trades = [
             e
             for e in self.trade_log
             if str(e.get("status") or "").lower() in {"win", "loss", "push"}
         ]
-        # Fallback: build from closed_trades if log is thin
-        if len(trades) < 2:
-            for row in self.closed_trades[-30:]:
+        # Prefer durable closed_trades for fuller history (log is capped)
+        if len(self.closed_trades) > len(trades):
+            trades = []
+            for row in self.closed_trades[-200:]:
+                meta = row.get("meta") or {}
+                profit = float(row.get("profit") or 0)
+                st = "win" if profit > 0 else ("push" if profit == 0 else "loss")
+                trades.append(
+                    {
+                        "status": st,
+                        "symbol": meta.get("symbol"),
+                        "contract_type": meta.get("contract_type"),
+                        "stake": meta.get("stake"),
+                        "profit": profit,
+                        "confidence": meta.get("confidence"),
+                        "family": meta.get("family"),
+                    }
+                )
+        elif len(trades) < 2:
+            for row in self.closed_trades[-80:]:
                 meta = row.get("meta") or {}
                 trades.append(
                     {
@@ -1856,6 +1890,7 @@ class TradingOrchestrator:
             learning=self.learner.snapshot(),
             risk=self.risk_manager.session_limits_snapshot(),
             strategies=self.strategy_engine.snapshots(),
+            force=bool(force),
         )
         if rec:
             logger.info(

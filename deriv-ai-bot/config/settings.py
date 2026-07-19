@@ -136,8 +136,13 @@ DEEPSEEK_BASE_URL = os.getenv(
 # Prefer current V4 model names (legacy deepseek-chat deprecates 2026-07-24)
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 DEEPSEEK_ENABLED = _env_bool("DEEPSEEK_ENABLED", bool(DEEPSEEK_API_KEY))
-# Analyze every N closed trades (0 = only on demand via API/UI)
-DEEPSEEK_ANALYZE_EVERY = _env_int("DEEPSEEK_ANALYZE_EVERY", 5)
+# Sample discipline (avoid burning tokens on noise):
+# - auto full cadence every N closes (default 20)
+# - need ≥ MIN_SAMPLE closed trades overall, or ≥ MIN_PER_SETUP on one market|strategy
+# - analysis payload is always per market / per strategy family
+DEEPSEEK_ANALYZE_EVERY = _env_int("DEEPSEEK_ANALYZE_EVERY", 20)
+DEEPSEEK_MIN_SAMPLE = _env_int("DEEPSEEK_MIN_SAMPLE", 20)
+DEEPSEEK_MIN_PER_SETUP = _env_int("DEEPSEEK_MIN_PER_SETUP", 12)
 DEEPSEEK_TIMEOUT_SEC = _env_float("DEEPSEEK_TIMEOUT_SEC", 45.0)
 
 # Tick history bootstrap (warmup AI buffers on connect)

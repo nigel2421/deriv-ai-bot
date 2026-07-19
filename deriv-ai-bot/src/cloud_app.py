@@ -321,7 +321,7 @@ async def control_deepseek_analyze(request: Request):
     orch = runtime.orchestrator
     if orch is None:
         return JSONResponse({"ok": False, "error": "bot_not_ready"}, status_code=503)
-    rec = orch._run_deepseek_analysis(source="dashboard")
+    rec = orch._run_deepseek_analysis(source="dashboard", force=True)
     want_json = "application/json" in (request.headers.get("accept") or "")
     if want_json or request.query_params.get("format") == "json":
         return JSONResponse(
@@ -1280,8 +1280,11 @@ async def root(request: Request) -> HTMLResponse:
   <div class="card">
     <h2>DeepSeek advisor</h2>
     <p class="muted">Click <b>DeepSeek analyze</b> in Controls (or
-       <a href="/control/deepseek-analyze">run now</a>). Works with 0 trades (general advice);
-       much better after ~10–20 closed trades of real outcomes.</p>
+       <a href="/control/deepseek-analyze">run now</a>). Auto runs only with enough sample:
+       <b>≥{ds.get('min_sample') or 20} closes overall</b> or
+       <b>≥{ds.get('min_per_setup') or 12} on one market|strategy</b>.
+       Analysis is <b>per market / per strategy</b> (digits vs rise_fall vs minute) so
+       verdicts match trade types the bot actually took — not a 5-trade global guess.</p>
     <div class="grid">
       <div class="stat"><div class="label">Status</div>
         <div class="val {'ok' if ds_ready=='ready' else 'bad'}">{ds_ready}</div></div>
@@ -1290,7 +1293,11 @@ async def root(request: Request) -> HTMLResponse:
       <div class="stat"><div class="label">Trades in last run</div>
         <div class="val">{ds_n if ds_n is not None else '—'}</div></div>
       <div class="stat"><div class="label">Auto every N closes</div>
-        <div class="val">{ds.get('analyze_every') if ds.get('analyze_every') is not None else '5'}</div></div>
+        <div class="val">{ds.get('analyze_every') if ds.get('analyze_every') is not None else '20'}</div></div>
+      <div class="stat"><div class="label">Min sample / per setup</div>
+        <div class="val">{ds.get('min_sample') or 20} / {ds.get('min_per_setup') or 12}</div></div>
+      <div class="stat"><div class="label">Closes until auto</div>
+        <div class="val">{ds.get('closes_since_analysis') if ds.get('closes_since_analysis') is not None else '—'}</div></div>
     </div>
     <p style="margin-top:0.85rem"><b>Summary</b></p>
     <p>{ds_summary}</p>

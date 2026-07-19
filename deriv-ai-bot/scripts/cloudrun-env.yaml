@@ -47,4 +47,7 @@ MATURE_SAMPLE_N: "100"
 DEEPSEEK_ENABLED: "true"
 DEEPSEEK_MODEL: "deepseek-v4-flash"
 DEEPSEEK_BASE_URL: "https://api.deepseek.com"
-DEEPSEEK_ANALYZE_EVERY: "5"
+# Token-efficient: 20 global closes OR 12 on one market|strategy; never on tiny samples
+DEEPSEEK_ANALYZE_EVERY: "20"
+DEEPSEEK_MIN_SAMPLE: "20"
+DEEPSEEK_MIN_PER_SETUP: "12"
