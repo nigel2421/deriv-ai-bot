@@ -51,6 +51,7 @@ from src.strategy.market_offer_gate import (
     classify_offer_error,
     duration_fallbacks,
 )
+from src.strategy.session_hours import is_likely_session_open
 from src.strategy.regime_filter import should_skip_digits, should_skip_rise_fall
 from src.strategy.digit_queue import queue_signal
 from src.strategy.minute_engine import analyze_minute
@@ -551,9 +552,15 @@ class TradingOrchestrator:
             pass
 
         for symbol in scan_symbols:
+            # Soft session hours (FX weekend etc.) — no permanent ignore
+            sess_open, sess_why = is_likely_session_open(symbol)
+            if not sess_open:
+                logger.debug("Skip %s: session closed (%s)", symbol, sess_why)
+                continue
             if self.offer_gate.is_symbol_blocked(symbol):
                 logger.info(
-                    "Skip %s: market offer blocked (closed/unavailable)", symbol
+                    "Skip %s: temporary offer block (re-probes when cooldown ends)",
+                    symbol,
                 )
                 continue
             ticks = self.fetcher.get_recent_data(symbol, 120)
@@ -991,8 +998,10 @@ class TradingOrchestrator:
                     intent["duration"] = int(
                         getattr(runtime, "duration", None) or TRADE_DURATION_TICKS
                     )
+                # Prefer strategy.xml unit (FX uses minutes; synthetics ticks)
+                ru = str(getattr(runtime, "duration_unit", None) or "").lower()
                 if not intent.get("duration_unit"):
-                    intent["duration_unit"] = "t"
+                    intent["duration_unit"] = ru if ru in {"t", "m", "s"} else "t"
                 if intent.get("family") == "minute_rise_fall" or intent.get(
                     "horizon"
                 ) == "minute":
@@ -1000,6 +1009,23 @@ class TradingOrchestrator:
                     intent["duration"] = int(
                         intent.get("duration") or self.minute_duration
                     )
+                # Forex / session FX: force minutes if still on ticks
+                try:
+                    from src.strategy.market_categories import (
+                        FOREX,
+                        DERIVED_FX,
+                        classify_market,
+                    )
+
+                    if classify_market(symbol) in {FOREX, DERIVED_FX}:
+                        if str(intent.get("duration_unit") or "t") == "t":
+                            intent["duration_unit"] = "m"
+                            intent["duration"] = int(
+                                intent.get("duration") or self.minute_duration or 5
+                            )
+                            intent["horizon"] = "minute"
+                except Exception:
+                    pass
                 blocked, br = self.offer_gate.is_blocked(
                     symbol,
                     contract_type=str(intent.get("contract_type") or ""),
@@ -1515,6 +1541,13 @@ class TradingOrchestrator:
                 min_net_return=self.min_net_return if self.execute_trades else None,
             )
             if result and not result.get("buy_failed"):
+                # Market is quoting — clear any closed/duration blocks for symbol
+                self.offer_gate.note_success(
+                    symbol,
+                    contract_type=contract_type,
+                    duration=d,
+                    duration_unit=u,
+                )
                 # proposal ok (maybe dry-run or executed or low payout skip)
                 return result, d, u, None
 

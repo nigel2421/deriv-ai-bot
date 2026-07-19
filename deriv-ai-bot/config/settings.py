@@ -75,7 +75,9 @@ _DEFAULT_SYMBOLS = (
     # Spike markets (RF)
     "BOOM500,BOOM1000,CRASH500,CRASH1000,"
     # Jump + daily reset (RF; jumps also allow digits where engine supports)
-    "JD10,JD25,JD50,RDBULL,RDBEAR"
+    "JD10,JD25,JD50,RDBULL,RDBEAR,"
+    # Major FX — session-aware (Sun–Fri); skipped on weekend, re-probed when open
+    "frxEURUSD,frxGBPUSD"
 )
 SYMBOLS = [
     s.strip()

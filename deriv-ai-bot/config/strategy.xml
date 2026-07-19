@@ -358,4 +358,31 @@
             </contract_types>
         </strategy>
     </market>
+
+    <!-- ===== Major FX (session-aware: Sun 22:00–Fri 22:00 UTC) =====
+         Rise/Fall only; prefer minutes (ticks often not offered on FX). -->
+    <market symbol="frxEURUSD">
+        <strategy type="martingale">
+            <base_stake>1.0</base_stake>
+            <max_steps>3</max_steps>
+            <duration>5</duration>
+            <duration_unit>m</duration_unit>
+            <contract_types>
+                <type>CALL</type>
+                <type>PUT</type>
+            </contract_types>
+        </strategy>
+    </market>
+    <market symbol="frxGBPUSD">
+        <strategy type="martingale">
+            <base_stake>1.0</base_stake>
+            <max_steps>3</max_steps>
+            <duration>5</duration>
+            <duration_unit>m</duration_unit>
+            <contract_types>
+                <type>CALL</type>
+                <type>PUT</type>
+            </contract_types>
+        </strategy>
+    </market>
 </configroot>

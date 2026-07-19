@@ -108,19 +108,26 @@ class MarketOfferGate:
     """
     Temporary skip list for symbol / duration / contract combos that the
     broker will not quote right now.
+
+    Blocks always expire — closed markets are *not* permanently ignored.
+    After cooldown the bot re-probes; on a successful quote/buy we clear
+    that symbol so it can trade again immediately.
     """
 
     def __init__(
         self,
         *,
         duration_cooldown_sec: int = 20 * 60,
-        market_closed_cooldown_sec: int = 45 * 60,
+        market_closed_cooldown_sec: int = 30 * 60,
         unavailable_cooldown_sec: int = 30 * 60,
+        # Cap re-probe delay so weekend/closed markets come back when open
+        max_market_closed_cooldown_sec: int = 2 * 60 * 60,
         max_entries: int = 500,
     ):
         self.duration_cooldown_sec = int(duration_cooldown_sec)
         self.market_closed_cooldown_sec = int(market_closed_cooldown_sec)
         self.unavailable_cooldown_sec = int(unavailable_cooldown_sec)
+        self.max_market_closed_cooldown_sec = int(max_market_closed_cooldown_sec)
         self.max_entries = max_entries
         # key -> {until, reason, error, hits}
         self._blocks: Dict[str, Dict[str, Any]] = {}
@@ -169,16 +176,6 @@ class MarketOfferGate:
         """Register a temporary block. Returns the block key."""
         now = time.time()
         self._purge(now)
-        if cooldown_sec is None:
-            if reason == REASON_MARKET_CLOSED:
-                cooldown_sec = self.market_closed_cooldown_sec
-            elif reason == REASON_DURATION:
-                cooldown_sec = self.duration_cooldown_sec
-            elif reason == REASON_UNAVAILABLE:
-                cooldown_sec = self.unavailable_cooldown_sec
-            else:
-                cooldown_sec = self.duration_cooldown_sec
-
         if reason == REASON_MARKET_CLOSED:
             key = self._key(symbol, whole_symbol=True)
         elif reason == REASON_DURATION:
@@ -194,26 +191,77 @@ class MarketOfferGate:
         else:
             key = self._key(symbol, whole_symbol=True)
 
-        until = now + float(cooldown_sec)
         prev = self._blocks.get(key) or {}
+        hits = int(prev.get("hits") or 0) + 1
+
+        if cooldown_sec is None:
+            if reason == REASON_MARKET_CLOSED:
+                # Escalate gently but always re-probe (max 2h) so opens are caught
+                base = self.market_closed_cooldown_sec
+                cooldown_sec = min(
+                    self.max_market_closed_cooldown_sec,
+                    int(base * (1.0 + 0.5 * min(hits - 1, 4))),
+                )
+            elif reason == REASON_DURATION:
+                cooldown_sec = self.duration_cooldown_sec
+            elif reason == REASON_UNAVAILABLE:
+                cooldown_sec = self.unavailable_cooldown_sec
+            else:
+                cooldown_sec = self.duration_cooldown_sec
+
+        until = now + float(cooldown_sec)
         self._blocks[key] = {
             "until": until,
             "reason": reason,
             "error": (error or "")[:240],
-            "hits": int(prev.get("hits") or 0) + 1,
+            "hits": hits,
             "symbol": symbol,
             "contract_type": contract_type,
             "duration": duration,
             "duration_unit": duration_unit,
+            "reprobe_at": until,
         }
         logger.warning(
-            "MarketOfferGate: block %s for %.0fm (reason=%s err=%s)",
+            "MarketOfferGate: block %s for %.0fm (reason=%s hits=%s err=%s) — will re-probe when open",
             key,
             cooldown_sec / 60.0,
             reason,
+            hits,
             (error or "")[:120],
         )
         return key
+
+    def clear_symbol(self, symbol: str, *, reason: str = "success") -> int:
+        """
+        Clear all blocks for a symbol (e.g. after a successful proposal/buy
+        or when session hours say the market should be open again).
+        Returns number of keys removed.
+        """
+        sym = str(symbol or "").strip()
+        if not sym:
+            return 0
+        drop = [k for k in self._blocks if k == f"{sym}|*" or k.startswith(f"{sym}|")]
+        for k in drop:
+            self._blocks.pop(k, None)
+        if drop:
+            logger.info(
+                "MarketOfferGate: cleared %d block(s) for %s (%s) — tradeable again",
+                len(drop),
+                sym,
+                reason,
+            )
+        return len(drop)
+
+    def note_success(
+        self,
+        symbol: str,
+        *,
+        contract_type: Optional[str] = None,
+        duration: Optional[int] = None,
+        duration_unit: Optional[str] = None,
+    ) -> None:
+        """Successful quote/buy → symbol is open; clear related cooldowns."""
+        self.clear_symbol(symbol, reason="offer_success")
 
     def note_error(
         self,
@@ -323,6 +371,15 @@ class MarketOfferGate:
                     "hits": v.get("hits"),
                     "error": v.get("error"),
                     "symbol": v.get("symbol"),
+                    "reprobe_at": v.get("reprobe_at") or until,
+                    "note": "expires then re-probes — not permanently ignored",
                 }
             )
-        return {"active_blocks": active[:40], "count": len(active)}
+        return {
+            "active_blocks": active[:40],
+            "count": len(active),
+            "policy": "temporary_cooldown_then_reprobe",
+            "max_market_closed_cooldown_min": round(
+                self.max_market_closed_cooldown_sec / 60.0, 1
+            ),
+        }
