@@ -41,6 +41,14 @@ from src.strategy.trend_analyzer import analyze_trend
 from src.strategy.pro_trend import analyze_pro_trend
 from src.strategy.adaptive_learner import AdaptiveLearner
 from src.strategy.anti_spiral import AntiSpiral
+from src.strategy.market_offer_gate import (
+    MarketOfferGate,
+    REASON_DURATION,
+    REASON_MARKET_CLOSED,
+    REASON_UNAVAILABLE,
+    classify_offer_error,
+    duration_fallbacks,
+)
 from src.strategy.regime_filter import should_skip_digits, should_skip_rise_fall
 from src.strategy.digit_queue import queue_signal
 from src.strategy.minute_engine import analyze_minute
@@ -124,6 +132,9 @@ class TradingOrchestrator:
             analyze_every=DEEPSEEK_ANALYZE_EVERY,
         )
         self.anti_spiral = AntiSpiral()
+        # Skip duration/market-closed offers so we scan open markets instead
+        self.offer_gate = MarketOfferGate()
+        self._last_scan_signals: list = []
         self.session_analytics = SessionAnalytics(path=Path("data/session_analytics.json"))
         self.strategy_builder = StrategyBuilder(directory=Path("data/strategies"))
         # Seed example marketplace strategy if empty
@@ -536,6 +547,11 @@ class TradingOrchestrator:
             pass
 
         for symbol in scan_symbols:
+            if self.offer_gate.is_symbol_blocked(symbol):
+                logger.info(
+                    "Skip %s: market offer blocked (closed/unavailable)", symbol
+                )
+                continue
             ticks = self.fetcher.get_recent_data(symbol, 120)
             if not ticks:
                 logger.debug("No ticks yet for %s", symbol)
@@ -966,6 +982,34 @@ class TradingOrchestrator:
                 # Flat stake mode: never martingale-double (stops loss pits)
                 if self.stake_mode == "flat":
                     intent["stake"] = float(intent.get("base_stake") or intent["stake"])
+                # Ensure duration fields for offer-gate checks
+                if not intent.get("duration"):
+                    intent["duration"] = int(
+                        getattr(runtime, "duration", None) or TRADE_DURATION_TICKS
+                    )
+                if not intent.get("duration_unit"):
+                    intent["duration_unit"] = "t"
+                if intent.get("family") == "minute_rise_fall" or intent.get(
+                    "horizon"
+                ) == "minute":
+                    intent["duration_unit"] = "m"
+                    intent["duration"] = int(
+                        intent.get("duration") or self.minute_duration
+                    )
+                blocked, br = self.offer_gate.is_blocked(
+                    symbol,
+                    contract_type=str(intent.get("contract_type") or ""),
+                    duration=int(intent.get("duration") or 5),
+                    duration_unit=str(intent.get("duration_unit") or "t"),
+                )
+                if blocked:
+                    logger.info(
+                        "Skip candidate %s %s: offer_gate (%s)",
+                        symbol,
+                        intent.get("contract_type"),
+                        br,
+                    )
+                    continue
                 ok_as, why = self.anti_spiral.allow(
                     symbol,
                     str(intent["contract_type"]),
@@ -993,13 +1037,15 @@ class TradingOrchestrator:
                     intent["strategy"],
                 )
 
+        self._last_scan_signals = list(signals)
         if not signals:
             logger.info(
                 "No signals ≥ %.0f%% confidence across %s markets "
-                "(anti_spiral=%s)",
+                "(anti_spiral=%s offer_blocks=%s)",
                 min_conf_base * 100,
                 len(self.active_symbols),
                 self.anti_spiral.snapshot(),
+                (self.offer_gate.snapshot() or {}).get("count"),
             )
             return None
 
@@ -1047,8 +1093,8 @@ class TradingOrchestrator:
             )
             return None
 
-        best = await self.scan_markets()
-        if not best:
+        head = await self.scan_markets()
+        if not head:
             logger.info(
                 "No qualifying signals | balance=%s %s open=%s strategies=%s",
                 balance,
@@ -1058,306 +1104,314 @@ class TradingOrchestrator:
             )
             return None
 
-        # Final DeepSeek hard-ban gate before any proposal/buy
-        if self.deepseek.is_banned(
-            str(best.get("symbol") or ""),
-            str(best.get("contract_type") or ""),
-        ):
-            logger.warning(
-                "DeepSeek ban blocked execute %s %s",
-                best.get("symbol"),
-                best.get("contract_type"),
-            )
-            return None
-
-        # Risk-based stake: quality 90+ → 1%, 80–90 → 0.5%, <80 → 0%
-        # then adaptive step-down after losses; clamp to risk caps
+        # Ranked multi-market list — skip dead duration/offers, try next open market
+        candidates = self.selector.rank_trades(self._last_scan_signals or [head])
+        if not candidates:
+            candidates = [head]
         assert balance is not None
-        quality_risk = best.get("risk_pct")
-        if quality_risk is None:
-            dq = best.get("decision_quality")
-            if dq is not None:
-                from src.analytics.no_trade_engine import risk_pct_from_quality
 
-                quality_risk = risk_pct_from_quality(float(dq))
-        if quality_risk is not None and float(quality_risk) <= 0:
-            logger.info(
-                "No-trade risk sizing 0%% (decision_quality=%s) — skip %s %s",
-                best.get("decision_quality"),
-                best.get("symbol"),
-                best.get("contract_type"),
-            )
-            return None
-        base_for_adapt = float(
-            quality_risk
-            if quality_risk is not None
-            else (self.risk_manager.max_stake_pct or 1.0)
-        )
-        # Cap quality risk at manager max
-        base_for_adapt = min(
-            base_for_adapt, float(self.risk_manager.max_stake_pct or 2.0)
-        )
-        risk_plan = adaptive_risk_pct(
-            base_risk_pct=base_for_adapt,
-            consecutive_losses=self.risk_manager.consecutive_losses,
-            consecutive_wins=0,
-            daily_pnl=self.risk_manager.daily_pnl,
-            session_start_balance=self.risk_manager.session_start_balance,
-            min_risk_pct=0.25 if base_for_adapt <= 0.5 else 0.5,
-            max_risk_pct=min(2.0, float(self.risk_manager.max_stake_pct or 2.0)),
-        )
-        risk_plan["quality_risk_pct"] = quality_risk
-        risk_plan["decision_quality"] = best.get("decision_quality")
-        raw_stake = float(best.get("stake", best.get("base_stake", MIN_STAKE)))
-        if self.risk_manager.base_stake is not None:
-            raw_stake = float(self.risk_manager.base_stake)
-        adapt_stake = stake_from_risk(
-            balance,
-            risk_plan["risk_pct"],
-            min_stake=MIN_STAKE,
-            max_stake=self.risk_manager.max_stake,
-        )
-        # Use the more conservative of strategy stake vs adaptive risk stake
-        raw_stake = min(raw_stake, adapt_stake) if adapt_stake > 0 else raw_stake
-        stake = self.risk_manager.clamp_stake(raw_stake, balance)
-        best["risk_plan"] = risk_plan
-        best["adaptive_stake"] = adapt_stake
-        # Martingale danger (informational; flat mode still logs survival)
-        best["martingale_safety"] = survival_probability(
-            balance, stake or MIN_STAKE, win_rate=0.48, max_levels=5
-        )
-        if (
-            self.stake_mode == "martingale"
-            and best["martingale_safety"].get("danger_level") in {"HIGH", "CRITICAL"}
-        ):
-            logger.warning(
-                "Martingale danger=%s survival=%.1f%% — forcing flat stake",
-                best["martingale_safety"].get("danger_level"),
-                best["martingale_safety"].get("survival_pct"),
-            )
-            stake = self.risk_manager.clamp_stake(
-                min(stake, float(self.risk_manager.base_stake or MIN_STAKE)),
-                balance,
-            )
-        if stake <= 0:
-            logger.warning(
-                "Stake %.2f cannot be placed (balance=%.2f risk caps)",
-                raw_stake,
-                balance,
-            )
-            return None
-
-        if stake < raw_stake:
-            logger.info(
-                "Stake clamped %.2f → %.2f (balance=%.2f)",
-                raw_stake,
-                stake,
-                balance,
-            )
-
-        stake_decision = self.risk_manager.can_trade(
-            balance, open_trades=open_count, proposed_stake=stake
-        )
-        if not stake_decision:
-            logger.warning("Risk block on stake: %s", stake_decision.reason)
-            return None
-
-        duration = int(best.get("duration") or TRADE_DURATION_TICKS)
-        duration_unit = str(best.get("duration_unit") or "t")
-        # Minute family always uses minutes
-        if best.get("family") == "minute_rise_fall" or best.get("horizon") == "minute":
-            duration_unit = "m"
-            duration = int(best.get("duration") or self.minute_duration)
-        # Always define horizon before any logging / event dict uses it
-        horizon = str(
-            best.get("horizon")
-            or ("minute" if duration_unit == "m" else "tick")
-        )
-
-        logger.info(
-            "Trade candidate: %s %s stake=%s barrier=%s conf=%.2f "
-            "dur=%s%s family=%s horizon=%s min_net=%.0f%% execute=%s balance=%.2f open=%s",
-            best["symbol"],
-            best["contract_type"],
-            stake,
-            best.get("barrier"),
-            best.get("confidence", 0),
-            duration,
-            duration_unit,
-            best.get("family"),
-            horizon,
-            self.min_net_return * 100,
-            self.execute_trades,
-            balance,
-            open_count,
-        )
-
-        result = await self.executor.propose_and_buy(
-            symbol=best["symbol"],
-            contract_type=best["contract_type"],
-            stake=stake,
-            barrier=best.get("barrier"),
-            currency=self.client.get_currency(),
-            duration=duration,
-            duration_unit=duration_unit,
-            execute=self.execute_trades,
-            min_net_return=self.min_net_return if self.execute_trades else None,
-        )
-
-        if not result:
-            err = self.executor.last_error or "unknown"
-            logger.error("Trade path failed: %s", err)
-            self._log_trade_event(
-                {
-                    "status": "failed",
-                    "symbol": best["symbol"],
-                    "contract_type": best["contract_type"],
-                    "stake": stake,
-                    "barrier": best.get("barrier"),
-                    "confidence": best.get("confidence"),
-                    "family": best.get("family"),
-                    "horizon": horizon,
-                    "duration": duration,
-                    "duration_unit": duration_unit,
-                    "error": err,
-                }
-            )
-            bal_now = self.client.get_balance()
-            await self.telegram.send_notification(
-                self.telegram.format_trade_error(
-                    title="Trade failed",
-                    error=err,
-                    balance=bal_now,
-                    currency=self.client.get_currency(),
-                    symbol=best["symbol"],
-                    contract_type=best["contract_type"],
-                    stake=stake,
+        last_hard_error: Optional[str] = None
+        for cand_i, best in enumerate(candidates[:8]):
+            if self.deepseek.is_banned(
+                str(best.get("symbol") or ""),
+                str(best.get("contract_type") or ""),
+            ):
+                logger.info(
+                    "DeepSeek ban skip execute %s %s",
+                    best.get("symbol"),
+                    best.get("contract_type"),
                 )
-            )
-            return None
+                continue
 
-        if result.get("skipped_low_payout"):
-            err = result.get("error") or self.executor.last_error or "payout too low"
-            net = result.get("net_return")
-            self._log_trade_event(
-                {
-                    "status": "skipped_low_payout",
-                    "symbol": best["symbol"],
-                    "contract_type": best["contract_type"],
-                    "stake": stake,
-                    "barrier": best.get("barrier"),
-                    "confidence": best.get("confidence"),
-                    "family": best.get("family"),
-                    "horizon": horizon,
-                    "duration": duration,
-                    "duration_unit": duration_unit,
-                    "ask_price": result.get("ask_price"),
-                    "payout": result.get("payout"),
-                    "net_return": net,
-                    "error": err,
-                }
-            )
-            # Soft notice only — not a failure; cool down this setup lightly
-            self.anti_spiral.note_selected(
-                str(best["symbol"]), str(best["contract_type"])
-            )
-            logger.info(
-                "Skipped low-payout quote: %s %s barrier=%s net=%s",
-                best["symbol"],
-                best["contract_type"],
-                best.get("barrier"),
-                f"{float(net):+.0%}" if net is not None else "?",
-            )
-            return result
+            quality_risk = best.get("risk_pct")
+            if quality_risk is None:
+                dq = best.get("decision_quality")
+                if dq is not None:
+                    from src.analytics.no_trade_engine import risk_pct_from_quality
 
-        if result.get("buy_failed"):
-            err = result.get("error") or self.executor.last_error or "buy failed"
-            logger.error("Buy failed after proposal: %s", err)
-            self._log_trade_event(
-                {
-                    "status": "buy_failed",
-                    "symbol": best["symbol"],
-                    "contract_type": best["contract_type"],
-                    "stake": stake,
-                    "error": err,
-                    "family": best.get("family"),
-                    "horizon": horizon,
-                }
-            )
-            await self._live_balance(refresh=True)
-            await self.telegram.send_notification(
-                self.telegram.format_trade_error(
-                    title="Buy failed",
-                    error=err,
-                    balance=self.client.get_balance(),
-                    currency=self.client.get_currency(),
-                    symbol=best["symbol"],
-                    contract_type=best["contract_type"],
-                    stake=stake,
+                    quality_risk = risk_pct_from_quality(float(dq))
+            if quality_risk is not None and float(quality_risk) <= 0:
+                logger.info(
+                    "No-trade risk sizing 0%% (decision_quality=%s) — skip %s %s",
+                    best.get("decision_quality"),
+                    best.get("symbol"),
+                    best.get("contract_type"),
                 )
+                continue
+
+            base_for_adapt = float(
+                quality_risk
+                if quality_risk is not None
+                else (self.risk_manager.max_stake_pct or 1.0)
             )
-            return result
+            base_for_adapt = min(
+                base_for_adapt, float(self.risk_manager.max_stake_pct or 2.0)
+            )
+            risk_plan = adaptive_risk_pct(
+                base_risk_pct=base_for_adapt,
+                consecutive_losses=self.risk_manager.consecutive_losses,
+                consecutive_wins=0,
+                daily_pnl=self.risk_manager.daily_pnl,
+                session_start_balance=self.risk_manager.session_start_balance,
+                min_risk_pct=0.25 if base_for_adapt <= 0.5 else 0.5,
+                max_risk_pct=min(2.0, float(self.risk_manager.max_stake_pct or 2.0)),
+            )
+            risk_plan["quality_risk_pct"] = quality_risk
+            risk_plan["decision_quality"] = best.get("decision_quality")
+            raw_stake = float(best.get("stake", best.get("base_stake", MIN_STAKE)))
+            if self.risk_manager.base_stake is not None:
+                raw_stake = float(self.risk_manager.base_stake)
+            adapt_stake = stake_from_risk(
+                balance,
+                risk_plan["risk_pct"],
+                min_stake=MIN_STAKE,
+                max_stake=self.risk_manager.max_stake,
+            )
+            raw_stake = min(raw_stake, adapt_stake) if adapt_stake > 0 else raw_stake
+            stake = self.risk_manager.clamp_stake(raw_stake, balance)
+            best["risk_plan"] = risk_plan
+            best["adaptive_stake"] = adapt_stake
+            best["martingale_safety"] = survival_probability(
+                balance, stake or MIN_STAKE, win_rate=0.48, max_levels=5
+            )
+            if (
+                self.stake_mode == "martingale"
+                and best["martingale_safety"].get("danger_level")
+                in {"HIGH", "CRITICAL"}
+            ):
+                stake = self.risk_manager.clamp_stake(
+                    min(stake, float(self.risk_manager.base_stake or MIN_STAKE)),
+                    balance,
+                )
+            if stake <= 0:
+                continue
 
-        proposal = result.get("proposal") or {}
-        buy = result.get("buy") or {}
+            stake_decision = self.risk_manager.can_trade(
+                balance, open_trades=open_count, proposed_stake=stake
+            )
+            if not stake_decision:
+                logger.warning("Risk block on stake: %s", stake_decision.reason)
+                return None
 
-        if buy.get("balance_after") is not None:
-            try:
-                self.client.set_balance(float(buy["balance_after"]))
-                self.risk_manager.update_balance(float(buy["balance_after"]))
-            except (TypeError, ValueError):
-                pass
+            duration = int(best.get("duration") or TRADE_DURATION_TICKS)
+            duration_unit = str(best.get("duration_unit") or "t")
+            if (
+                best.get("family") == "minute_rise_fall"
+                or best.get("horizon") == "minute"
+            ):
+                duration_unit = "m"
+                duration = int(best.get("duration") or self.minute_duration)
+            horizon = str(
+                best.get("horizon")
+                or ("minute" if duration_unit == "m" else "tick")
+            )
 
-        bal_after = buy.get("balance_after")
-        if bal_after is None:
-            bal_after = self.client.get_balance()
-        await self.telegram.send_notification(
-            self.telegram.format_trade_opened(
-                symbol=best["symbol"],
-                contract_type=best["contract_type"],
-                stake=stake,
-                balance=bal_after,
-                currency=self.client.get_currency(),
-                confidence=best.get("confidence"),
-                barrier=best.get("barrier"),
+            blocked, br = self.offer_gate.is_blocked(
+                str(best["symbol"]),
+                contract_type=str(best.get("contract_type") or ""),
                 duration=duration,
                 duration_unit=duration_unit,
-                family=str(best.get("family") or ""),
-                contract_id=result.get("contract_id"),
-                ask_price=proposal.get("ask_price"),
-                executed=bool(result.get("executed")),
             )
-        )
+            if blocked:
+                logger.info(
+                    "Offer gate skip %s %s %s%s (%s)",
+                    best["symbol"],
+                    best.get("contract_type"),
+                    duration,
+                    duration_unit,
+                    br,
+                )
+                continue
 
-        contract_id = result.get("contract_id")
-        if result.get("executed") and contract_id is not None:
-            opened_at = datetime.now(timezone.utc).isoformat()
-            meta = {
-                **best,
-                "symbol": best["symbol"],
-                "contract_type": best["contract_type"],
-                "stake": stake,
-                "barrier": best.get("barrier"),
-                "confidence": best.get("confidence"),
-                "family": best.get("family"),
-                "horizon": horizon,
-                "duration": duration,
-                "duration_unit": duration_unit,
-                "proposal_id": proposal.get("id"),
-                "opened_at": opened_at,
-                "ask_price": proposal.get("ask_price") or result.get("ask_price"),
-                "payout": proposal.get("payout") or result.get("payout"),
-                "net_return": result.get("net_return"),
-                "status": "open",
-                "contract_id": contract_id,
-            }
-            # Track locally first so dashboard always sees the open trade
-            self.open_trade_meta[contract_id] = dict(meta)
-            await self.monitor.watch(contract_id, meta=meta)
-            self._log_trade_event(
-                {
-                    "status": "open",
-                    "contract_id": contract_id,
+            logger.info(
+                "Trade candidate [%s/%s]: %s %s stake=%s barrier=%s conf=%.2f "
+                "dur=%s%s family=%s horizon=%s execute=%s",
+                cand_i + 1,
+                min(8, len(candidates)),
+                best["symbol"],
+                best["contract_type"],
+                stake,
+                best.get("barrier"),
+                best.get("confidence", 0),
+                duration,
+                duration_unit,
+                best.get("family"),
+                horizon,
+                self.execute_trades,
+            )
+
+            result, duration, duration_unit, offer_reason = (
+                await self._propose_with_offer_fallbacks(
+                    best=best,
+                    stake=stake,
+                    duration=duration,
+                    duration_unit=duration_unit,
+                )
+            )
+            horizon = str(
+                best.get("horizon")
+                or ("minute" if duration_unit == "m" else "tick")
+            )
+
+            if not result:
+                err = self.executor.last_error or "unknown"
+                last_hard_error = err
+                self._log_trade_event(
+                    {
+                        "status": "failed_offer"
+                        if offer_reason
+                        else "failed",
+                        "symbol": best["symbol"],
+                        "contract_type": best["contract_type"],
+                        "stake": stake,
+                        "barrier": best.get("barrier"),
+                        "confidence": best.get("confidence"),
+                        "family": best.get("family"),
+                        "horizon": horizon,
+                        "duration": duration,
+                        "duration_unit": duration_unit,
+                        "error": err,
+                        "offer_reason": offer_reason,
+                    }
+                )
+                if offer_reason:
+                    # Soft skip — keep scanning other open markets this cycle
+                    logger.warning(
+                        "Offer rejected %s %s (%s): %s — try next market",
+                        best["symbol"],
+                        best.get("contract_type"),
+                        offer_reason,
+                        err,
+                    )
+                    continue
+                # Hard failure (network etc.) — notify once, stop cycle
+                await self.telegram.send_notification(
+                    self.telegram.format_trade_error(
+                        title="Trade failed",
+                        error=err,
+                        balance=self.client.get_balance(),
+                        currency=self.client.get_currency(),
+                        symbol=best["symbol"],
+                        contract_type=best["contract_type"],
+                        stake=stake,
+                    )
+                )
+                return None
+
+            if result.get("skipped_low_payout"):
+                err = (
+                    result.get("error")
+                    or self.executor.last_error
+                    or "payout too low"
+                )
+                net = result.get("net_return")
+                self._log_trade_event(
+                    {
+                        "status": "skipped_low_payout",
+                        "symbol": best["symbol"],
+                        "contract_type": best["contract_type"],
+                        "stake": stake,
+                        "barrier": best.get("barrier"),
+                        "confidence": best.get("confidence"),
+                        "family": best.get("family"),
+                        "horizon": horizon,
+                        "duration": duration,
+                        "duration_unit": duration_unit,
+                        "ask_price": result.get("ask_price"),
+                        "payout": result.get("payout"),
+                        "net_return": net,
+                        "error": err,
+                    }
+                )
+                self.anti_spiral.note_selected(
+                    str(best["symbol"]), str(best["contract_type"])
+                )
+                logger.info(
+                    "Skipped low-payout quote: %s %s — try next market",
+                    best["symbol"],
+                    best["contract_type"],
+                )
+                continue
+
+            if result.get("buy_failed"):
+                err = result.get("error") or self.executor.last_error or "buy failed"
+                offer_reason = self.offer_gate.note_error(
+                    str(best["symbol"]),
+                    err,
+                    contract_type=str(best.get("contract_type") or ""),
+                    duration=duration,
+                    duration_unit=duration_unit,
+                )
+                self._log_trade_event(
+                    {
+                        "status": "buy_failed",
+                        "symbol": best["symbol"],
+                        "contract_type": best["contract_type"],
+                        "stake": stake,
+                        "error": err,
+                        "family": best.get("family"),
+                        "horizon": horizon,
+                        "offer_reason": offer_reason,
+                    }
+                )
+                if offer_reason:
+                    logger.warning(
+                        "Buy offer block %s: %s — try next market",
+                        best["symbol"],
+                        err,
+                    )
+                    continue
+                await self._live_balance(refresh=True)
+                await self.telegram.send_notification(
+                    self.telegram.format_trade_error(
+                        title="Buy failed",
+                        error=err,
+                        balance=self.client.get_balance(),
+                        currency=self.client.get_currency(),
+                        symbol=best["symbol"],
+                        contract_type=best["contract_type"],
+                        stake=stake,
+                    )
+                )
+                return result
+
+            # Success path (proposal and/or buy)
+            proposal = result.get("proposal") or {}
+            buy = result.get("buy") or {}
+
+            if buy.get("balance_after") is not None:
+                try:
+                    self.client.set_balance(float(buy["balance_after"]))
+                    self.risk_manager.update_balance(float(buy["balance_after"]))
+                except (TypeError, ValueError):
+                    pass
+
+            bal_after = buy.get("balance_after")
+            if bal_after is None:
+                bal_after = self.client.get_balance()
+            await self.telegram.send_notification(
+                self.telegram.format_trade_opened(
+                    symbol=best["symbol"],
+                    contract_type=best["contract_type"],
+                    stake=stake,
+                    balance=bal_after,
+                    currency=self.client.get_currency(),
+                    confidence=best.get("confidence"),
+                    barrier=best.get("barrier"),
+                    duration=duration,
+                    duration_unit=duration_unit,
+                    family=str(best.get("family") or ""),
+                    contract_id=result.get("contract_id"),
+                    ask_price=proposal.get("ask_price"),
+                    executed=bool(result.get("executed")),
+                )
+            )
+
+            contract_id = result.get("contract_id")
+            if result.get("executed") and contract_id is not None:
+                opened_at = datetime.now(timezone.utc).isoformat()
+                meta = {
+                    **best,
                     "symbol": best["symbol"],
                     "contract_type": best["contract_type"],
                     "stake": stake,
@@ -1367,23 +1421,136 @@ class TradingOrchestrator:
                     "horizon": horizon,
                     "duration": duration,
                     "duration_unit": duration_unit,
-                    "ask_price": meta.get("ask_price"),
-                    "payout": meta.get("payout"),
-                    "net_return": meta.get("net_return"),
+                    "proposal_id": proposal.get("id"),
                     "opened_at": opened_at,
+                    "ask_price": proposal.get("ask_price") or result.get("ask_price"),
+                    "payout": proposal.get("payout") or result.get("payout"),
+                    "net_return": result.get("net_return"),
+                    "status": "open",
+                    "contract_id": contract_id,
                 }
-            )
-            logger.info(
-                "Trade opened contract_id=%s family=%s horizon=%s open_now=%s",
-                contract_id,
-                best.get("family"),
-                horizon,
-                self.open_trade_count(),
-            )
-        elif not self.execute_trades:
-            logger.info("Proposal-only cycle complete (EXECUTE_TRADES=false)")
+                self.open_trade_meta[contract_id] = dict(meta)
+                await self.monitor.watch(contract_id, meta=meta)
+                self._log_trade_event(
+                    {
+                        "status": "open",
+                        "contract_id": contract_id,
+                        "symbol": best["symbol"],
+                        "contract_type": best["contract_type"],
+                        "stake": stake,
+                        "barrier": best.get("barrier"),
+                        "confidence": best.get("confidence"),
+                        "family": best.get("family"),
+                        "horizon": horizon,
+                        "duration": duration,
+                        "duration_unit": duration_unit,
+                        "ask_price": meta.get("ask_price"),
+                        "payout": meta.get("payout"),
+                        "net_return": meta.get("net_return"),
+                        "opened_at": opened_at,
+                    }
+                )
+                logger.info(
+                    "Trade opened contract_id=%s family=%s horizon=%s open_now=%s",
+                    contract_id,
+                    best.get("family"),
+                    horizon,
+                    self.open_trade_count(),
+                )
+            elif not self.execute_trades:
+                logger.info("Proposal-only cycle complete (EXECUTE_TRADES=false)")
 
-        return result
+            return result
+
+        logger.info(
+            "All candidates skipped/rejected this cycle (offer_blocks=%s last_err=%s)",
+            (self.offer_gate.snapshot() or {}).get("count"),
+            last_hard_error,
+        )
+        return None
+
+    async def _propose_with_offer_fallbacks(
+        self,
+        *,
+        best: Dict[str, Any],
+        stake: float,
+        duration: int,
+        duration_unit: str,
+    ) -> tuple:
+        """
+        Try primary duration then fallbacks. On duration/market-closed errors,
+        cool down that offer and continue. Returns
+        (result|None, duration_used, unit_used, offer_reason|None).
+        """
+        symbol = str(best["symbol"])
+        contract_type = str(best["contract_type"])
+        primary = (int(duration), str(duration_unit or "t").lower())
+        attempts = [primary] + duration_fallbacks(primary[0], primary[1])
+        last_offer_reason: Optional[str] = None
+        last_dur, last_unit = primary
+
+        for d, u in attempts:
+            blocked, _br = self.offer_gate.is_blocked(
+                symbol,
+                contract_type=contract_type,
+                duration=d,
+                duration_unit=u,
+            )
+            if blocked or self.offer_gate.is_symbol_blocked(symbol):
+                continue
+            last_dur, last_unit = d, u
+            result = await self.executor.propose_and_buy(
+                symbol=symbol,
+                contract_type=contract_type,
+                stake=stake,
+                barrier=best.get("barrier"),
+                currency=self.client.get_currency(),
+                duration=d,
+                duration_unit=u,
+                execute=self.execute_trades,
+                min_net_return=self.min_net_return if self.execute_trades else None,
+            )
+            if result and not result.get("buy_failed"):
+                # proposal ok (maybe dry-run or executed or low payout skip)
+                return result, d, u, None
+
+            err = None
+            if result and result.get("buy_failed"):
+                err = result.get("error") or self.executor.last_error
+            else:
+                err = self.executor.last_error or "unknown"
+
+            reason = self.offer_gate.note_error(
+                symbol,
+                err,
+                contract_type=contract_type,
+                duration=d,
+                duration_unit=u,
+            )
+            last_offer_reason = reason
+            if reason == REASON_DURATION:
+                logger.info(
+                    "Duration not offered %s %s %s%s — try fallback",
+                    symbol,
+                    contract_type,
+                    d,
+                    u,
+                )
+                continue
+            if reason in {REASON_MARKET_CLOSED, REASON_UNAVAILABLE}:
+                logger.warning(
+                    "Market not tradeable %s (%s): %s",
+                    symbol,
+                    reason,
+                    err,
+                )
+                return None, d, u, reason
+            # Non-offer error (balance, network, …)
+            if result and result.get("buy_failed"):
+                return result, d, u, None
+            return None, d, u, None
+
+        return None, last_dur, last_unit, last_offer_reason or REASON_DURATION
 
     def _log_trade_event(self, event: Dict[str, Any]) -> None:
         event = {
@@ -1767,6 +1934,7 @@ class TradingOrchestrator:
             "min_confidence": self.min_confidence,
             "learning": self.learner.snapshot(),
             "anti_spiral": self.anti_spiral.snapshot(),
+            "offer_gate": self.offer_gate.snapshot(),
             "deepseek": self.deepseek.snapshot(),
             "stake_mode": self.stake_mode,
             "enable_minute": self.enable_minute,
