@@ -87,6 +87,10 @@ class DeepSeekAdvisor:
         self.last_error: Optional[str] = None
         self.closes_since_analysis = 0
         self._type_multipliers: Dict[str, float] = {}
+        # Explicit bans from last rec (symbol|TYPE and/or TYPE)
+        self._bans: set[str] = set()
+        # Preferred keys (verdict keep with mult >= 1.05)
+        self._preferred: set[str] = set()
         # Validate key format: DeepSeek keys are sk-…  Google AIzaSy… is wrong secret
         self.key_valid = False
         if raw_key:
@@ -124,9 +128,17 @@ class DeepSeekAdvisor:
                 for k, v in mults.items()
                 if isinstance(v, (int, float))
             }
+            self._bans = {str(k).upper() for k in (data.get("bans") or [])}
+            self._preferred = {
+                str(k).upper() for k in (data.get("preferred") or [])
+            }
+            # Rebuild ban/preferred from mults if cache predated these fields
+            if not self._bans and self._type_multipliers:
+                self._rebuild_ban_pref_from_mults()
             logger.info(
-                "DeepSeekAdvisor loaded cache (%d type mults) from %s",
+                "DeepSeekAdvisor loaded cache (%d type mults, %d bans) from %s",
                 len(self._type_multipliers),
+                len(self._bans),
                 self.cache_path,
             )
         except Exception as e:
@@ -138,6 +150,8 @@ class DeepSeekAdvisor:
             payload = {
                 "recommendation": self.last_recommendation,
                 "type_multipliers": self._type_multipliers,
+                "bans": sorted(self._bans),
+                "preferred": sorted(self._preferred),
                 "updated_at": time.time(),
             }
             self.cache_path.write_text(
@@ -173,10 +187,74 @@ class DeepSeekAdvisor:
             return max(0.5, min(1.25, self._type_multipliers[ct]))
         return 1.0
 
+    def is_banned(self, symbol: str, contract_type: str) -> bool:
+        """Hard skip when DeepSeek banned this symbol|type (or type globally)."""
+        ct = str(contract_type or "").upper()
+        sym = str(symbol or "").strip()
+        if not ct:
+            return False
+        keys = [ct]
+        if sym:
+            keys.insert(0, f"{sym}|{ct}")
+        for k in keys:
+            if k in self._bans:
+                return True
+            # Explicit mult floor = ban (even if verdict missing in old cache)
+            if k in self._type_multipliers and self._type_multipliers[k] <= 0.55:
+                return True
+        return False
+
+    def selection_boost(self, symbol: str, contract_type: str) -> float:
+        """
+        Score delta for trade_selector: preferred setups positive, reduce/ban negative.
+        Range roughly [-0.08, +0.05].
+        """
+        ct = str(contract_type or "").upper()
+        sym = str(symbol or "").strip()
+        key = f"{sym}|{ct}" if sym else ct
+        if self.is_banned(symbol, contract_type):
+            return -0.5
+        mult = self.confidence_multiplier(symbol, contract_type)
+        if key in self._preferred or ct in self._preferred:
+            return 0.04 + max(0.0, (mult - 1.0) * 0.08)
+        if mult >= 1.08:
+            return 0.03
+        if mult <= 0.85:
+            return -0.04
+        if mult < 0.95:
+            return -0.02
+        return 0.0
+
+    def preferred_symbols(self) -> List[str]:
+        """Symbols DeepSeek prefers (for scan ordering)."""
+        out: List[str] = []
+        seen = set()
+        for k in list(self._preferred) + list(self._type_multipliers.keys()):
+            if "|" not in k:
+                continue
+            sym = k.split("|", 1)[0].strip()
+            mult = float(self._type_multipliers.get(k) or 1.0)
+            if not sym or mult < 1.0:
+                continue
+            if sym not in seen:
+                seen.add(sym)
+                out.append(sym)
+        return out
+
+    def _rebuild_ban_pref_from_mults(self) -> None:
+        self._bans = {
+            k for k, v in self._type_multipliers.items() if float(v) <= 0.55
+        }
+        self._preferred = {
+            k for k, v in self._type_multipliers.items() if float(v) >= 1.05
+        }
+
     def apply_recommendation(self, rec: Dict[str, Any]) -> None:
-        """Update type multipliers from a recommendation payload."""
+        """Update type multipliers + hard bans/preferred from a recommendation."""
         self.last_recommendation = rec
         analysis = rec.get("trade_type_analysis") or []
+        new_bans: set[str] = set()
+        new_pref: set[str] = set()
         for row in analysis:
             if not isinstance(row, dict):
                 continue
@@ -196,11 +274,35 @@ class DeepSeekAdvisor:
             except (TypeError, ValueError):
                 continue
             mult_f = max(0.5, min(1.25, mult_f))
-            if ct:
-                self._type_multipliers[ct] = mult_f
+            if verdict == "ban":
+                mult_f = min(mult_f, 0.5)
+            # Prefer symbol|type when symbol given; type-only when global rec
+            keys: List[str] = []
             if sym and ct:
-                self._type_multipliers[f"{sym}|{ct}"] = mult_f
+                sk = f"{sym}|{ct}"
+                keys.append(sk)
+                self._type_multipliers[sk] = mult_f
+            elif ct:
+                keys.append(ct)
+                self._type_multipliers[ct] = mult_f
+            else:
+                continue
+            for k in keys:
+                if verdict == "ban" or mult_f <= 0.55:
+                    new_bans.add(k)
+                elif verdict in {"keep", "boost", "prefer"} or mult_f >= 1.05:
+                    new_pref.add(k)
+        # Replace ban/pref sets from this analysis (fresh signal)
+        if analysis:
+            self._bans = new_bans
+            self._preferred = new_pref
         self._save_cache()
+        logger.info(
+            "DeepSeek applied: mults=%d bans=%d preferred=%d",
+            len(self._type_multipliers),
+            len(self._bans),
+            len(self._preferred),
+        )
 
     def build_user_payload(
         self,
@@ -343,6 +445,9 @@ class DeepSeekAdvisor:
             "closes_since_analysis": self.closes_since_analysis,
             "last_error": self.last_error,
             "type_multipliers": dict(self._type_multipliers),
+            "bans": sorted(self._bans),
+            "preferred": sorted(self._preferred),
+            "preferred_symbols": self.preferred_symbols(),
             "recommendation": self.last_recommendation,
             "skill_path": str(self.skill_path),
         }

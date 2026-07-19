@@ -149,7 +149,8 @@ class TradingOrchestrator:
         # Telegram /resume also clears risk cooldown
         self.telegram.on_resume_hook = lambda: self.force_resume("telegram:/resume")
         self.telegram.on_pause_hook = lambda: self.force_pause("telegram:/pause", 60)
-        # Prefer env SYMBOLS only (focused learning). Do not auto-append all XML markets.
+        # Env SYMBOLS is the scan universe (multi-market exploration).
+        # strategy.xml still supplies per-market templates; on-demand runtime for extras.
         xml_syms = self.parser.market_symbols()
         if SYMBOLS:
             self.active_symbols = list(SYMBOLS)
@@ -515,7 +516,7 @@ class TradingOrchestrator:
         min_conf_base = self.min_confidence
         phase = self.learner.cold_start_phase()
 
-        # Self-optimizing order: high PF / positive velocity markets first
+        # Self-optimizing order: priority book first, DeepSeek-preferred markets next
         try:
             from src.analytics.market_scanner import get_priority_book
 
@@ -524,6 +525,15 @@ class TradingOrchestrator:
             )
         except Exception:
             scan_symbols = list(self.active_symbols or [])
+        try:
+            ds_pref = self.deepseek.preferred_symbols()
+            if ds_pref:
+                pref_set = {s.upper() for s in ds_pref}
+                head = [s for s in scan_symbols if str(s).upper() in pref_set]
+                tail = [s for s in scan_symbols if str(s).upper() not in pref_set]
+                scan_symbols = head + tail
+        except Exception:
+            pass
 
         for symbol in scan_symbols:
             ticks = self.fetcher.get_recent_data(symbol, 120)
@@ -581,6 +591,16 @@ class TradingOrchestrator:
                         rf_allowed = sorted(allowed_contracts(classify_market(symbol)))
                 except Exception:
                     pass
+
+            # DeepSeek hard bans — remove contract types from allow-lists
+            digit_allowed = [
+                t
+                for t in digit_allowed
+                if not self.deepseek.is_banned(symbol, t)
+            ]
+            rf_allowed = [
+                t for t in rf_allowed if not self.deepseek.is_banned(symbol, t)
+            ]
 
             candidates: list = []
 
@@ -646,6 +666,12 @@ class TradingOrchestrator:
                     allowed_types=digit_allowed,
                 )
                 if signal_type:
+                    if self.deepseek.is_banned(symbol, signal_type):
+                        logger.info(
+                            "DeepSeek ban skip %s %s", symbol, signal_type
+                        )
+                        signal_type = None
+                if signal_type:
                     adj = self.learner.adjust_confidence(
                         symbol, signal_type, conf or raw_conf
                     )
@@ -653,11 +679,16 @@ class TradingOrchestrator:
                         symbol, signal_type
                     )
                     adj = float(max(0.0, min(0.99, adj * ds_mult)))
+                    # "reduce" verdict → slightly higher bar
+                    if ds_mult < 0.9:
+                        need_extra = 0.03 * (0.9 - ds_mult) / 0.4
+                    else:
+                        need_extra = 0.0
                     need = self.learner.effective_min_confidence(
                         min_conf_base,
                         family="digits",
                         contract_type=signal_type,
-                    )
+                    ) + need_extra
                     if adj >= need:
                         try:
                             pred_digit = int(pred.get("digit")) if pred.get("digit") is not None else None
@@ -682,6 +713,9 @@ class TradingOrchestrator:
                             )
                             intent["trend_strength"] = 0.0
                             intent["deepseek_mult"] = ds_mult
+                            intent["deepseek_boost"] = self.deepseek.selection_boost(
+                                symbol, signal_type
+                            )
                             intent["min_conf_used"] = need
                             gated = self._apply_analytics_gate(
                                 intent, ticks, family="digits"
@@ -732,15 +766,23 @@ class TradingOrchestrator:
                 if chop > 0.45:
                     rf_conf *= 1.0 - (chop - 0.45) * 0.8
                 if rf_type and rf_type in rf_allowed:
+                    if self.deepseek.is_banned(symbol, rf_type):
+                        logger.info("DeepSeek ban skip %s %s", symbol, rf_type)
+                        rf_type = None
+                if rf_type and rf_type in rf_allowed:
                     adj = self.learner.adjust_confidence(symbol, rf_type, rf_conf)
                     # DeepSeek per-type learning multiplier
                     ds_mult = self.deepseek.confidence_multiplier(symbol, rf_type)
                     adj = float(max(0.0, min(0.99, adj * ds_mult)))
+                    if ds_mult < 0.9:
+                        need_extra = 0.03 * (0.9 - ds_mult) / 0.4
+                    else:
+                        need_extra = 0.0
                     need = self.learner.effective_min_confidence(
                         min_conf_base,
                         family="rise_fall",
                         contract_type=rf_type,
-                    )
+                    ) + need_extra
                     if adj >= need:
                         intent = self.strategy_engine.apply_signal(
                             symbol=symbol,
@@ -776,6 +818,9 @@ class TradingOrchestrator:
                                 symbol, intent["contract_type"]
                             )
                             intent["deepseek_mult"] = ds_mult
+                            intent["deepseek_boost"] = self.deepseek.selection_boost(
+                                symbol, rf_type
+                            )
                             intent["min_conf_used"] = need
                             gated = self._apply_analytics_gate(
                                 intent, ticks, family="rise_fall"
@@ -822,13 +867,21 @@ class TradingOrchestrator:
                     min_confidence=need,
                 )
                 if msig and msig["contract_type"] in rf_allowed:
+                    mct = msig["contract_type"]
+                    if self.deepseek.is_banned(symbol, mct):
+                        logger.info("DeepSeek ban skip minute %s %s", symbol, mct)
+                        msig = None
+                if msig and msig["contract_type"] in rf_allowed:
+                    mct = msig["contract_type"]
                     adj = self.learner.adjust_confidence(
-                        symbol, msig["contract_type"], float(msig["confidence"])
+                        symbol, mct, float(msig["confidence"])
                     )
+                    ds_mult = self.deepseek.confidence_multiplier(symbol, mct)
+                    adj = float(max(0.0, min(0.99, adj * ds_mult)))
                     if adj >= need:
                         intent = self.strategy_engine.apply_signal(
                             symbol=symbol,
-                            signal_type=msig["contract_type"],
+                            signal_type=mct,
                             signal_barrier=None,
                             confidence=adj,
                         )
@@ -839,6 +892,10 @@ class TradingOrchestrator:
                             intent["duration_unit"] = "m"
                             intent["raw_confidence"] = msig["confidence"]
                             intent["minute_details"] = msig.get("details")
+                            intent["deepseek_mult"] = ds_mult
+                            intent["deepseek_boost"] = self.deepseek.selection_boost(
+                                symbol, mct
+                            )
                             intent["learn_bonus"] = self.learner.selection_bonus(
                                 symbol, intent["contract_type"]
                             )
@@ -998,6 +1055,18 @@ class TradingOrchestrator:
                 self.client.get_currency(),
                 open_count,
                 self.strategy_engine.snapshots(),
+            )
+            return None
+
+        # Final DeepSeek hard-ban gate before any proposal/buy
+        if self.deepseek.is_banned(
+            str(best.get("symbol") or ""),
+            str(best.get("contract_type") or ""),
+        ):
+            logger.warning(
+                "DeepSeek ban blocked execute %s %s",
+                best.get("symbol"),
+                best.get("contract_type"),
             )
             return None
 

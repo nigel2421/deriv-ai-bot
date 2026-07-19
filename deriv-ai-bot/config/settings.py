@@ -65,9 +65,18 @@ DERIV_OAUTH_TOKEN_URL = os.getenv(
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 MODE = os.getenv("MODE", "demo")
-# Focused learning portfolio (winners-aligned). Override via SYMBOLS env.
-# Was 10 symbols — samples spread thin. Prefer R_25,R_50,1HZ50V,R_10.
-_DEFAULT_SYMBOLS = "R_25,R_50,1HZ50V,R_10"
+# Multi-market exploration universe (MOR ranks; DeepSeek reweights types).
+# Not every Deriv listing — curated synthetics so ticks + learning stay useful.
+# Override via SYMBOLS env (comma-separated).
+_DEFAULT_SYMBOLS = (
+    # Classic + 1Hz volatilities (digits + RF)
+    "R_10,R_25,R_50,R_75,R_100,"
+    "1HZ10V,1HZ25V,1HZ50V,1HZ75V,1HZ100V,"
+    # Spike markets (RF)
+    "BOOM500,BOOM1000,CRASH500,CRASH1000,"
+    # Jump + daily reset (RF; jumps also allow digits where engine supports)
+    "JD10,JD25,JD50,RDBULL,RDBEAR"
+)
 SYMBOLS = [
     s.strip()
     for s in os.getenv("SYMBOLS", _DEFAULT_SYMBOLS).split(",")

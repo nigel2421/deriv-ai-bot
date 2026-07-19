@@ -4,8 +4,8 @@ PYTHONUNBUFFERED: "1"
 TF_CPP_MIN_LOG_LEVEL: "2"
 SAVE_TICK_HISTORY: "false"
 TICK_HISTORY_COUNT: "500"
-# Focused symbols (learning quality > breadth)
-SYMBOLS: "R_25,R_50,1HZ50V,R_10"
+# Multi-market exploration (MOR ranks; DeepSeek reweights). Curated, not all Deriv.
+SYMBOLS: "R_10,R_25,R_50,R_75,R_100,1HZ10V,1HZ25V,1HZ50V,1HZ75V,1HZ100V,BOOM500,BOOM1000,CRASH500,CRASH1000,JD10,JD25,JD50,RDBULL,RDBEAR"
 DERIV_API_MODE: "auto"
 MAX_OPEN_TRADES: "1"
 # Risk 0.5–1.5% per trade (flat stake — no martingale)

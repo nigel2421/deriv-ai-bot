@@ -59,6 +59,12 @@ class TradeSelector:
             key = f"{s.get('symbol')}|{str(s.get('contract_type') or '').upper()}"
             winner_bias = 0.04 if key in _WINNER_HINTS else 0.0
 
+            # DeepSeek hard recommendations: preferred setups win ties; bans excluded upstream
+            ds_boost = float(s.get("deepseek_boost") or 0.0)
+            ds_mult = float(s.get("deepseek_mult") or 1.0)
+            if ds_mult <= 0.55:
+                return -1.0
+
             # Slight preference when scoring path matches contract family
             cat_bias = 0.0
             path = str(s.get("scoring_path") or "")
@@ -77,6 +83,7 @@ class TradeSelector:
             return (
                 conf
                 + bonus
+                + ds_boost
                 + 0.06 * strength
                 + family_bias
                 + edge_bonus
