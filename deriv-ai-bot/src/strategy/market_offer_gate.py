@@ -90,14 +90,15 @@ def duration_fallbacks(duration: int, unit: str) -> List[Tuple[int, str]]:
     if u == "t":
         for nd in (5, 3, 1, 10, 15, 2, 4, 8):
             add(nd, "t")
-        # Some synthetics only quote short minutes
+        # Prefer staying on ticks for synthetics; minutes only as last resort
         for nd in (1, 2, 5):
             add(nd, "m")
     elif u == "m":
+        # If minutes rejected (common on Boom/Crash), try ticks first
+        for nd in (5, 3, 1, 10, 15):
+            add(nd, "t")
         for nd in (1, 2, 3, 5, 10):
             add(nd, "m")
-        for nd in (5, 10, 15):
-            add(nd, "t")
     else:
         for nd in (5, 1, 10):
             add(nd, u)

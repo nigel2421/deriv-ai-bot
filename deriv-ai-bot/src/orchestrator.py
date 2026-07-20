@@ -907,7 +907,18 @@ class TradingOrchestrator:
                 )
 
             # ---- Minute Rise/Fall (isolated) ----
-            if self.enable_minute and rf_allowed and not skip_rf:
+            # Boom/Crash (and other spike synthetics) usually reject minute
+            # durations ("Trading is not offered for this duration") — ticks only.
+            cat_name = str((mprof or {}).get("category") or "").lower()
+            minute_ok = cat_name not in {
+                "boom",
+                "crash",
+                "jump",
+                "dex",
+                "step",
+                "daily_reset",
+            }
+            if self.enable_minute and rf_allowed and not skip_rf and minute_ok:
               try:
                 need = max(
                     self.minute_min_conf,
