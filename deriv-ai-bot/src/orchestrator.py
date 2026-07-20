@@ -83,9 +83,19 @@ class TradingOrchestrator:
         self.parser = XMLStrategyParser()
         self.strategy_engine = StrategyEngine(self.parser)
         global_cfg = self.parser.config.get("global", {})
-        # Confidence gate comes from strategy.xml only (soft safety clamp 50–95%)
-        raw_min = float(global_cfg.get("min_confidence", 0.80))
+        # Confidence: env MIN_CONFIDENCE overrides strategy.xml (bootstrap-friendly)
+        import os as _os
+
+        env_min = (_os.getenv("MIN_CONFIDENCE") or "").strip()
+        if env_min:
+            try:
+                raw_min = float(env_min)
+            except ValueError:
+                raw_min = float(global_cfg.get("min_confidence", 0.72))
+        else:
+            raw_min = float(global_cfg.get("min_confidence", 0.72))
         self.min_confidence = max(0.50, min(0.95, raw_min))
+        self._scan_skip_stats: Dict[str, int] = {}
 
         min_balance = MIN_BALANCE
         if mode == "real" and min_balance < 10:
@@ -531,6 +541,18 @@ class TradingOrchestrator:
         signals = []
         min_conf_base = self.min_confidence
         phase = self.learner.cold_start_phase()
+        # Track skip reasons this cycle for /status audit
+        skip_stats: Dict[str, int] = {
+            "session_closed": 0,
+            "offer_blocked": 0,
+            "no_ticks": 0,
+            "chop_skip": 0,
+            "conf_low": 0,
+            "analytics_skip": 0,
+            "anti_spiral": 0,
+            "candidates": 0,
+            "deepseek_ban": 0,
+        }
 
         # Self-optimizing order: priority book first, DeepSeek-preferred markets next
         try:
@@ -555,9 +577,11 @@ class TradingOrchestrator:
             # Soft session hours (FX weekend etc.) — no permanent ignore
             sess_open, sess_why = is_likely_session_open(symbol)
             if not sess_open:
+                skip_stats["session_closed"] += 1
                 logger.debug("Skip %s: session closed (%s)", symbol, sess_why)
                 continue
             if self.offer_gate.is_symbol_blocked(symbol):
+                skip_stats["offer_blocked"] += 1
                 logger.info(
                     "Skip %s: temporary offer block (re-probes when cooldown ends)",
                     symbol,
@@ -565,6 +589,7 @@ class TradingOrchestrator:
                 continue
             ticks = self.fetcher.get_recent_data(symbol, 120)
             if not ticks:
+                skip_stats["no_ticks"] += 1
                 logger.debug("No ticks yet for %s", symbol)
                 continue
 
@@ -635,6 +660,7 @@ class TradingOrchestrator:
             skip_d, dig_reason, dig_reg = should_skip_digits(ticks)
             skip_rf, rf_reason, rf_reg = should_skip_rise_fall(ticks)
             if skip_d and skip_rf:
+                skip_stats["chop_skip"] += 1
                 logger.info(
                     "Skip %s both families: digits=%s rf=%s chop=%.2f",
                     symbol,
@@ -747,6 +773,8 @@ class TradingOrchestrator:
                             gated = self._apply_analytics_gate(
                                 intent, ticks, family="digits"
                             )
+                            if not gated:
+                                skip_stats["analytics_skip"] += 1
                             if gated:
                                 candidates.append(gated)
               except Exception as e:
@@ -852,9 +880,12 @@ class TradingOrchestrator:
                             gated = self._apply_analytics_gate(
                                 intent, ticks, family="rise_fall"
                             )
+                            if not gated:
+                                skip_stats["analytics_skip"] += 1
                             if gated:
                                 candidates.append(gated)
                     else:
+                        skip_stats["conf_low"] += 1
                         logger.debug(
                             "%s trend %s conf=%.2f adj=%.2f < min=%.2f phase=%s",
                             symbol,
@@ -1046,6 +1077,7 @@ class TradingOrchestrator:
                     float(intent.get("confidence") or 0),
                 )
                 if not ok_as:
+                    skip_stats["anti_spiral"] += 1
                     logger.info(
                         "AntiSpiral block %s %s: %s",
                         symbol,
@@ -1053,6 +1085,7 @@ class TradingOrchestrator:
                         why,
                     )
                     continue
+                skip_stats["candidates"] += 1
                 signals.append(intent)
                 logger.info(
                     "Candidate %s: type=%s stake=%.2f barrier=%s conf=%.2f "
@@ -1068,12 +1101,21 @@ class TradingOrchestrator:
                 )
 
         self._last_scan_signals = list(signals)
+        self._scan_skip_stats = {
+            **skip_stats,
+            "phase": phase,
+            "min_conf": min_conf_base,
+            "signals": len(signals),
+            "offer_blocks": (self.offer_gate.snapshot() or {}).get("count"),
+        }
         if not signals:
             logger.info(
                 "No signals ≥ %.0f%% confidence across %s markets "
-                "(anti_spiral=%s offer_blocks=%s)",
+                "(phase=%s skips=%s anti_spiral=%s offer_blocks=%s)",
                 min_conf_base * 100,
                 len(self.active_symbols),
+                phase,
+                skip_stats,
                 self.anti_spiral.snapshot(),
                 (self.offer_gate.snapshot() or {}).get("count"),
             )
@@ -1154,12 +1196,29 @@ class TradingOrchestrator:
                 continue
 
             quality_risk = best.get("risk_pct")
+            cold_phase = self.learner.cold_start_phase() == "cold"
             if quality_risk is None:
                 dq = best.get("decision_quality")
                 if dq is not None:
                     from src.analytics.no_trade_engine import risk_pct_from_quality
 
-                    quality_risk = risk_pct_from_quality(float(dq))
+                    quality_risk = risk_pct_from_quality(
+                        float(dq), cold_start=cold_phase
+                    )
+            # Cold bootstrap: never hard-zero stake solely on quality band
+            if (
+                quality_risk is not None
+                and float(quality_risk) <= 0
+                and cold_phase
+                and float(best.get("confidence") or 0) >= 0.72
+            ):
+                quality_risk = 0.35
+                logger.info(
+                    "Cold bootstrap stake 0.35%% (decision_quality=%s) %s %s",
+                    best.get("decision_quality"),
+                    best.get("symbol"),
+                    best.get("contract_type"),
+                )
             if quality_risk is not None and float(quality_risk) <= 0:
                 logger.info(
                     "No-trade risk sizing 0%% (decision_quality=%s) — skip %s %s",
@@ -2003,6 +2062,7 @@ class TradingOrchestrator:
             "learning": self.learner.snapshot(),
             "anti_spiral": self.anti_spiral.snapshot(),
             "offer_gate": self.offer_gate.snapshot(),
+            "scan_audit": getattr(self, "_scan_skip_stats", {}) or {},
             "deepseek": self.deepseek.snapshot(),
             "stake_mode": self.stake_mode,
             "enable_minute": self.enable_minute,

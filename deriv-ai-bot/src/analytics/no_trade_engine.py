@@ -206,15 +206,20 @@ def trade_quality_score(
     }
 
 
-def risk_pct_from_quality(quality: float) -> float:
+def risk_pct_from_quality(quality: float, *, cold_start: bool = False) -> float:
     """
-    90+ → 1.0% · 80–90 → 0.5% · below 80 → 0% (no trade)
+    90+ → 1.0% · 80–90 → 0.5% · below 80 → 0% (no trade).
+
+    During cold-start, allow a tiny stake (0.35–0.5%) so history can build
+    when quality is in the 55–80 band (otherwise the bot never trades).
     """
     q = float(quality)
     if q >= 90:
         return 1.0
     if q >= 80:
         return 0.5
+    if cold_start and q >= 55:
+        return 0.35 if q < 70 else 0.5
     return 0.0
 
 
@@ -367,22 +372,23 @@ def evaluate_no_trade(
         _block(True, f"Regime {regime} does not allow {ct}")
     _block(retired, f"Edge decay {decay:.0f}% ≥ {MAX_EDGE_DECAY_PCT:.0f}% — retire strategy")
 
-    risk_pct = risk_pct_from_quality(quality)
-    if risk_pct <= 0 and quality < min_quality:
+    risk_pct = risk_pct_from_quality(quality, cold_start=cold_start)
+    if risk_pct <= 0 and quality < min_quality and not cold_start:
         _block(True, f"Risk sizing 0% (quality {quality:.0f})")
 
-    # During cold-start, ensemble/regime may be too strict — require EV + quality soft
-    # RANDOM is normally blocked, but very high conf + positive EV may still learn.
+    # During cold-start, ensemble/regime may be too strict — require EV + quality soft.
+    # Bootstrap band: conf ≥0.72 (RANDOM ≥0.78) so learning can start without
+    # waiting forever for perfect structure on n=0 history.
     def _cold_soft_ok() -> bool:
-        conf_ok = float(signal_confidence) >= 0.80
+        conf_ok = float(signal_confidence) >= 0.72
         if regime == "RANDOM":
-            conf_ok = float(signal_confidence) >= 0.85
+            conf_ok = float(signal_confidence) >= 0.78
         return (
             ev > 0
-            and quality >= 65
+            and quality >= 55
             and conf_ok
-            and hpp_velocity >= -10
-            and pattern_clarity >= 55
+            and hpp_velocity >= -12
+            and pattern_clarity >= 48
             and not retired
         )
 

@@ -7,8 +7,8 @@
       Adaptive learner re-weights markets after every closed trade.
     -->
     <global>
-        <!-- Raise/lower trade gate here only (e.g. 0.75 or 0.85) -->
-        <min_confidence>0.80</min_confidence>
+        <!-- Bootstrap: 0.72 while cold; raise toward 0.80 once mature samples exist -->
+        <min_confidence>0.72</min_confidence>
         <!-- flat = never double after loss (recommended). martingale = optional. -->
         <stake_mode>flat</stake_mode>
         <!-- Session stop-loss % of start balance (band 5–10; UI can raise within band) -->

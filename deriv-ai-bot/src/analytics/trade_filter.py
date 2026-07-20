@@ -335,9 +335,13 @@ def evaluate_setup(
             "reasons": list(ps.get("reasons") or [])
             + [f"Cold-start live pattern proxy {live_pattern:.0f} (n={n_samples})"],
         }
-        # Boost clarity similarly so hierarchical near-zero doesn't lock out
-        if float(clarity.get("pattern_clarity") or 0) < 60:
-            boosted = max(float(clarity.get("pattern_clarity") or 0), live_sig * 75.0)
+        # Boost clarity so hierarchical near-zero doesn't lock out forever
+        if float(clarity.get("pattern_clarity") or 0) < 70:
+            boosted = max(
+                float(clarity.get("pattern_clarity") or 0),
+                live_sig * 82.0,
+                52.0 if live_sig >= 0.72 else 0.0,
+            )
             clarity = {
                 **clarity,
                 "pattern_clarity": round(boosted, 1),
@@ -455,15 +459,17 @@ def evaluate_setup(
         and entropy_trig_ok
     )
 
-    # Explicit cold-start allow ONLY in cold phase (not forever)
+    # Explicit cold-start allow ONLY in cold phase (not forever).
+    # Thresholds intentionally lower than mature so n=0 history can start.
     cold_allow = False
     if cold_start and phase == "cold" and not allow:
         cold_allow = (
-            live_sig >= 0.78
-            and chop < 0.72
-            and float(quality["quality_score"]) >= 55
-            and float(live["live_edge"]) >= 55
-            and float(ps["pattern_strength"]) >= 55
+            live_sig >= 0.72
+            and chop < 0.78
+            and float(quality["quality_score"]) >= 50
+            and float(live["live_edge"]) >= 50
+            and float(ps["pattern_strength"]) >= 50
+            and float(clarity.get("pattern_clarity") or 0) >= 45
         )
         if cold_allow:
             allow = True

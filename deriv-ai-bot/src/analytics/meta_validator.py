@@ -122,7 +122,7 @@ def meta_validate(
     regime_ok = ct in allowed if allowed is not None else False
     if regime == "RANDOM":
         regime_ok = False
-    if cold_start and regime == "RANDOM" and float(confidence) >= 85:
+    if cold_start and regime == "RANDOM" and float(confidence) >= 75:
         # Allow learning path noted in no-trade engine
         regime_ok = True
     _check(
