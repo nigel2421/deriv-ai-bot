@@ -1,27 +1,40 @@
 <configroot>
     <!--
-      Digits portfolio: OVER@6 (digits 7-9) and UNDER@4 (digits 0-3).
-      Martingale recovery + global risk caps protect the account.
+      Portfolio: classic volatilities + 1-second (1Hz) indices.
+      Digits: OVER@6, UNDER@4, EVEN, ODD
+      Rise/Fall: CALL / PUT (trend + EMA/RSI/MACD/structure)
+      min_confidence: raise/lower ONLY here (e.g. 0.75–0.85). Default 0.80.
+      Adaptive learner re-weights markets after every closed trade.
     -->
     <global>
-        <min_confidence>0.72</min_confidence>
-        <max_daily_loss_pct>5.0</max_daily_loss_pct>
-        <max_consecutive_losses>5</max_consecutive_losses>
-        <trade_pause_minutes>60</trade_pause_minutes>
+        <!-- Raise/lower trade gate here only (e.g. 0.75 or 0.85) -->
+        <min_confidence>0.80</min_confidence>
+        <!-- flat = never double after loss (recommended). martingale = optional. -->
+        <stake_mode>flat</stake_mode>
+        <!-- Tighter daily loss: stop digging when demo is bleeding -->
+        <max_daily_loss_pct>2.0</max_daily_loss_pct>
+        <!-- After this many losses in a row, pause (protects account) -->
+        <max_consecutive_losses>3</max_consecutive_losses>
+        <trade_pause_minutes>30</trade_pause_minutes>
     </global>
 
-    <!-- Volatility indices — diversified last-digit markets -->
+    <!-- ===== Classic synthetic indices ===== -->
     <market symbol="R_10">
         <strategy type="martingale">
             <base_stake>1.0</base_stake>
-            <max_steps>5</max_steps>
+            <max_steps>3</max_steps>
             <over_barrier>6</over_barrier>
             <under_barrier>4</under_barrier>
+            <barrier_mode>adaptive</barrier_mode>
             <duration>5</duration>
             <duration_unit>t</duration_unit>
             <contract_types>
                 <type>DIGITOVER</type>
                 <type>DIGITUNDER</type>
+                <type>DIGITEVEN</type>
+                <type>DIGITODD</type>
+                <type>CALL</type>
+                <type>PUT</type>
             </contract_types>
         </strategy>
     </market>
@@ -29,59 +42,180 @@
     <market symbol="R_25">
         <strategy type="martingale">
             <base_stake>1.0</base_stake>
-            <max_steps>5</max_steps>
+            <max_steps>3</max_steps>
             <over_barrier>6</over_barrier>
             <under_barrier>4</under_barrier>
+            <barrier_mode>adaptive</barrier_mode>
             <duration>5</duration>
             <duration_unit>t</duration_unit>
             <contract_types>
                 <type>DIGITOVER</type>
                 <type>DIGITUNDER</type>
+                <type>DIGITEVEN</type>
+                <type>DIGITODD</type>
+                <type>CALL</type>
+                <type>PUT</type>
             </contract_types>
         </strategy>
     </market>
 
     <market symbol="R_50">
         <strategy type="martingale">
-            <base_stake>1.5</base_stake>
-            <max_steps>5</max_steps>
+            <base_stake>1.0</base_stake>
+            <max_steps>3</max_steps>
             <over_barrier>6</over_barrier>
             <under_barrier>4</under_barrier>
+            <barrier_mode>adaptive</barrier_mode>
             <duration>5</duration>
             <duration_unit>t</duration_unit>
             <contract_types>
                 <type>DIGITOVER</type>
                 <type>DIGITUNDER</type>
+                <type>DIGITEVEN</type>
+                <type>DIGITODD</type>
+                <type>CALL</type>
+                <type>PUT</type>
             </contract_types>
         </strategy>
     </market>
 
     <market symbol="R_75">
         <strategy type="martingale">
-            <base_stake>1.5</base_stake>
-            <max_steps>5</max_steps>
+            <base_stake>1.0</base_stake>
+            <max_steps>3</max_steps>
             <over_barrier>6</over_barrier>
             <under_barrier>4</under_barrier>
+            <barrier_mode>adaptive</barrier_mode>
             <duration>5</duration>
             <duration_unit>t</duration_unit>
             <contract_types>
                 <type>DIGITOVER</type>
                 <type>DIGITUNDER</type>
+                <type>DIGITEVEN</type>
+                <type>DIGITODD</type>
+                <type>CALL</type>
+                <type>PUT</type>
             </contract_types>
         </strategy>
     </market>
 
     <market symbol="R_100">
         <strategy type="martingale">
-            <base_stake>2.0</base_stake>
-            <max_steps>5</max_steps>
+            <base_stake>1.0</base_stake>
+            <max_steps>3</max_steps>
             <over_barrier>6</over_barrier>
             <under_barrier>4</under_barrier>
+            <barrier_mode>adaptive</barrier_mode>
             <duration>5</duration>
             <duration_unit>t</duration_unit>
             <contract_types>
                 <type>DIGITOVER</type>
                 <type>DIGITUNDER</type>
+                <type>DIGITEVEN</type>
+                <type>DIGITODD</type>
+                <type>CALL</type>
+                <type>PUT</type>
+            </contract_types>
+        </strategy>
+    </market>
+
+    <!-- ===== 1-second (1Hz) volatility indices ===== -->
+    <market symbol="1HZ10V">
+        <strategy type="martingale">
+            <base_stake>1.0</base_stake>
+            <max_steps>3</max_steps>
+            <over_barrier>6</over_barrier>
+            <under_barrier>4</under_barrier>
+            <barrier_mode>adaptive</barrier_mode>
+            <duration>5</duration>
+            <duration_unit>t</duration_unit>
+            <contract_types>
+                <type>DIGITOVER</type>
+                <type>DIGITUNDER</type>
+                <type>DIGITEVEN</type>
+                <type>DIGITODD</type>
+                <type>CALL</type>
+                <type>PUT</type>
+            </contract_types>
+        </strategy>
+    </market>
+
+    <market symbol="1HZ25V">
+        <strategy type="martingale">
+            <base_stake>1.0</base_stake>
+            <max_steps>3</max_steps>
+            <over_barrier>6</over_barrier>
+            <under_barrier>4</under_barrier>
+            <barrier_mode>adaptive</barrier_mode>
+            <duration>5</duration>
+            <duration_unit>t</duration_unit>
+            <contract_types>
+                <type>DIGITOVER</type>
+                <type>DIGITUNDER</type>
+                <type>DIGITEVEN</type>
+                <type>DIGITODD</type>
+                <type>CALL</type>
+                <type>PUT</type>
+            </contract_types>
+        </strategy>
+    </market>
+
+    <market symbol="1HZ50V">
+        <strategy type="martingale">
+            <base_stake>1.0</base_stake>
+            <max_steps>3</max_steps>
+            <over_barrier>6</over_barrier>
+            <under_barrier>4</under_barrier>
+            <barrier_mode>adaptive</barrier_mode>
+            <duration>5</duration>
+            <duration_unit>t</duration_unit>
+            <contract_types>
+                <type>DIGITOVER</type>
+                <type>DIGITUNDER</type>
+                <type>DIGITEVEN</type>
+                <type>DIGITODD</type>
+                <type>CALL</type>
+                <type>PUT</type>
+            </contract_types>
+        </strategy>
+    </market>
+
+    <market symbol="1HZ75V">
+        <strategy type="martingale">
+            <base_stake>1.0</base_stake>
+            <max_steps>3</max_steps>
+            <over_barrier>6</over_barrier>
+            <under_barrier>4</under_barrier>
+            <barrier_mode>adaptive</barrier_mode>
+            <duration>5</duration>
+            <duration_unit>t</duration_unit>
+            <contract_types>
+                <type>DIGITOVER</type>
+                <type>DIGITUNDER</type>
+                <type>DIGITEVEN</type>
+                <type>DIGITODD</type>
+                <type>CALL</type>
+                <type>PUT</type>
+            </contract_types>
+        </strategy>
+    </market>
+
+    <market symbol="1HZ100V">
+        <strategy type="martingale">
+            <base_stake>1.0</base_stake>
+            <max_steps>3</max_steps>
+            <over_barrier>6</over_barrier>
+            <under_barrier>4</under_barrier>
+            <barrier_mode>adaptive</barrier_mode>
+            <duration>5</duration>
+            <duration_unit>t</duration_unit>
+            <contract_types>
+                <type>DIGITOVER</type>
+                <type>DIGITUNDER</type>
+                <type>DIGITEVEN</type>
+                <type>DIGITODD</type>
+                <type>CALL</type>
+                <type>PUT</type>
             </contract_types>
         </strategy>
     </market>

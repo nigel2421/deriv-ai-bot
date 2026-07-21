@@ -84,12 +84,16 @@ def _parse_strategy_elem(strategy_elem: ET.Element) -> Dict[str, Any]:
         "default_barrier": _require_int(
             strategy_elem, "default_barrier", 4, required=False
         ),
-        # Fixed digit barriers (preferred over AI-picked barriers)
+        # Fallback barriers when barrier_mode=fixed (adaptive is default)
         "over_barrier": _require_int(
             strategy_elem, "over_barrier", 6, required=False
         ),
         "under_barrier": _require_int(
             strategy_elem, "under_barrier", 4, required=False
+        ),
+        # adaptive | fixed | random
+        "barrier_mode": (
+            (_elem_text(strategy_elem, "barrier_mode") or "adaptive").strip().lower()
         ),
     }
     # Optional multiplier for martingale (default classic 2x)
@@ -131,6 +135,11 @@ class XMLStrategyParser:
                     ),
                     "trade_pause_minutes": _require_int(
                         global_elem, "trade_pause_minutes", 60
+                    ),
+                    "stake_mode": (
+                        (_elem_text(global_elem, "stake_mode") or "flat")
+                        .strip()
+                        .lower()
                     ),
                 }
             else:

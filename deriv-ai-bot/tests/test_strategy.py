@@ -51,57 +51,88 @@ def test_zuno_switch():
 def test_xml_parser_full_fields():
     p = XMLStrategyParser("config/strategy.xml")
     g = p.config["global"]
-    assert g["min_confidence"] == 0.72
+    assert g["min_confidence"] == 0.80
 
     r100 = p.get_strategy("R_100")
     assert r100["type"] == "martingale"
-    assert r100["base_stake"] == 2.0
-    assert r100["max_steps"] == 5
+    assert r100["base_stake"] == 1.0
+    assert r100["max_steps"] == 3
     assert r100["over_barrier"] == 6
     assert r100["under_barrier"] == 4
     assert "DIGITOVER" in r100["contract_types"]
     assert "DIGITUNDER" in r100["contract_types"]
-    assert "DIGITODD" not in r100["contract_types"]
+    assert "DIGITEVEN" in r100["contract_types"]
+    assert "DIGITODD" in r100["contract_types"]
+    assert "CALL" in r100["contract_types"]
+    assert "PUT" in r100["contract_types"]
 
     r75 = p.get_strategy("R_75")
     assert r75["type"] == "martingale"
-    assert r75["base_stake"] == 1.5
+    assert r75["base_stake"] == 1.0
     assert r75["over_barrier"] == 6
     assert r75["under_barrier"] == 4
 
-    # Portfolio symbols present
-    for sym in ("R_10", "R_25", "R_50", "R_75", "R_100"):
+    # Portfolio symbols present (classic + 1Hz)
+    for sym in (
+        "R_10",
+        "R_25",
+        "R_50",
+        "R_75",
+        "R_100",
+        "1HZ10V",
+        "1HZ25V",
+        "1HZ50V",
+        "1HZ75V",
+        "1HZ100V",
+    ):
         assert sym in p.config["markets"]
 
 
 def test_strategy_engine_martingale_stake():
     engine = StrategyEngine(XMLStrategyParser("config/strategy.xml"))
-    intent = engine.apply_signal("R_100", "DIGITOVER", 5, 0.9)
+    # Adaptive barriers: pass predicted digit + ticks so OVER/UNDER vary
+    ticks = [{"quote": 100.0 + (i % 10) * 0.1, "epoch": 1000 + i} for i in range(40)]
+    intent = engine.apply_signal(
+        "R_100", "DIGITOVER", 5, 0.9, predicted_digit=8, ticks=ticks
+    )
     assert intent is not None
-    assert intent["stake"] == 2.0
+    assert intent["stake"] == 1.0
     assert intent["contract_type"] == "DIGITOVER"
-    # Fixed strategy barrier OVER@6 (ignores AI barrier 5)
-    assert intent["barrier"] == 6
+    assert intent["barrier"] is not None
+    assert 0 <= int(intent["barrier"]) <= 8
+    # Predicted 8 should be in win set (barrier < 8)
+    assert int(intent["barrier"]) < 8
     assert intent["strategy"] == "martingale"
 
     engine.on_trade_result("R_100", is_win=False)
-    intent2 = engine.apply_signal("R_100", "DIGITUNDER", 3, 0.9)
+    intent2 = engine.apply_signal(
+        "R_100", "DIGITUNDER", 3, 0.9, predicted_digit=2, ticks=ticks
+    )
     assert intent2 is not None
-    assert intent2["stake"] == 4.0  # doubled after loss
-    assert intent2["barrier"] == 4  # fixed UNDER@4
+    assert intent2["stake"] == 2.0  # doubled after loss
+    assert intent2["barrier"] is not None
+    assert 1 <= int(intent2["barrier"]) <= 9
+    assert int(intent2["barrier"]) > 2  # pred 2 in UNDER win set
 
 
-def test_strategy_engine_over_under_only():
+def test_strategy_engine_digits_and_even():
     engine = StrategyEngine(XMLStrategyParser("config/strategy.xml"))
-    # EVEN not allowed — falls through to allow-list OVER/UNDER
+    # EVEN is allowed in portfolio
     intent = engine.apply_signal("R_75", "DIGITEVEN", None, 0.9)
     assert intent is not None
-    assert intent["contract_type"] in {"DIGITOVER", "DIGITUNDER"}
-    assert intent["stake"] == 1.5
-    if intent["contract_type"] == "DIGITOVER":
-        assert intent["barrier"] == 6
-    else:
-        assert intent["barrier"] == 4
+    assert intent["contract_type"] == "DIGITEVEN"
+    assert intent["stake"] == 1.0
+    assert intent["barrier"] is None
+
+    ticks = [{"quote": 503.78, "epoch": 1000 + i} for i in range(30)]  # last digit 8
+    intent2 = engine.apply_signal(
+        "R_75", "DIGITOVER", None, 0.9, predicted_digit=8, ticks=ticks
+    )
+    assert intent2 is not None
+    assert intent2["contract_type"] == "DIGITOVER"
+    assert intent2["barrier"] is not None
+    assert 0 <= int(intent2["barrier"]) <= 8
+    assert int(intent2["barrier"]) < 8
 
 
 def test_risk_blocks_unknown_balance():
@@ -150,3 +181,54 @@ def test_win_resets_streak():
     rm.record_trade_result(2)
     assert rm.consecutive_losses == 0
     assert rm.daily_pnl == 0.0
+
+
+def test_cooldown_auto_resumes_and_resets_streak():
+    """
+    Regression: after max consecutive losses the bot paused 30m, but on
+    expiry consecutive_losses stayed at max → infinite re-pause loop.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    rm = RiskManager(
+        min_balance=1.0,
+        max_consecutive_losses=3,
+        trade_pause_minutes=30,
+    )
+    rm.record_trade_result(-1)
+    rm.record_trade_result(-1)
+    rm.record_trade_result(-1)
+    assert rm.consecutive_losses == 3
+    assert rm.is_paused()
+    assert rm.paused_until is not None
+
+    # Still blocked during cooldown
+    d = rm.can_trade(100.0)
+    assert not d
+    assert "paused" in d.reason
+
+    # Simulate timer expiry
+    rm.paused_until = datetime.now(timezone.utc) - timedelta(seconds=5)
+    # can_trade must auto-resume and allow trading again
+    d2 = rm.can_trade(100.0)
+    assert d2, d2.reason
+    assert rm.consecutive_losses == 0
+    assert not rm.is_paused()
+    evt = rm.consume_auto_resume()
+    assert evt is not None
+    assert evt.get("previous_streak") == 3
+    # Second can_trade must NOT re-pause forever
+    d3 = rm.can_trade(100.0)
+    assert d3
+    assert rm.consecutive_losses == 0
+
+
+def test_manual_resume_clears_pause():
+    rm = RiskManager(min_balance=1.0, max_consecutive_losses=2, trade_pause_minutes=30)
+    rm.record_trade_result(-1)
+    rm.record_trade_result(-1)
+    assert rm.is_paused()
+    rm.resume(reset_streak=True)
+    assert not rm.is_paused()
+    assert rm.consecutive_losses == 0
+    assert rm.can_trade(50.0)

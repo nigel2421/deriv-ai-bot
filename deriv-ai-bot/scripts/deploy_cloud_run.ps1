@@ -65,7 +65,7 @@ gcloud run deploy $Service `
   --max-instances 1 `
   --cpu-boost `
   --no-cpu-throttling `
-  --set-env-vars "^@^MODE=$Mode^@^EXECUTE_TRADES=true^@^PYTHONUNBUFFERED=1^@^TF_CPP_MIN_LOG_LEVEL=2^@^SAVE_TICK_HISTORY=false^@^TICK_HISTORY_COUNT=200^@^SYMBOLS=R_10,R_25,R_50,R_75,R_100^@^DERIV_API_MODE=auto^@^MAX_OPEN_TRADES=3^@^MAX_STAKE_PCT=3.0^@^MIN_BALANCE=5.0" `
+  --env-vars-file "scripts/cloudrun-env.yaml" `
   --set-secrets "DERIV_API_TOKEN=deriv-api-token:latest,DERIV_APP_ID=deriv-app-id:latest,TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_CHAT_ID=telegram-chat-id:latest"
 
 Write-Host ""

@@ -87,6 +87,46 @@ class SignalGenerator:
         )
         return contract_type, barrier, float(confidence)
 
+    def parity_confidence(
+        self, ticks: Sequence[Dict[str, Any]], lookback: int = 30
+    ) -> Tuple[Dict[str, Any], float]:
+        """
+        Even/Odd streak analysis from recent last digits.
+        Returns ({even: bool, even_rate, streak, n}, confidence 0..1).
+        """
+        digits = last_digits_from_ticks(ticks, n=lookback)
+        if len(digits) < 8:
+            return {"even": True, "even_rate": 0.5, "streak": 0, "n": len(digits)}, 0.0
+
+        even_n = sum(1 for d in digits if d % 2 == 0)
+        even_rate = even_n / len(digits)
+        # Current streak of same parity at the end
+        last_even = digits[-1] % 2 == 0
+        streak = 0
+        for d in reversed(digits):
+            if (d % 2 == 0) == last_even:
+                streak += 1
+            else:
+                break
+
+        # Bias toward dominant parity; boost on streak 3+ of same parity
+        dominant_even = even_rate >= 0.5
+        dom_rate = even_rate if dominant_even else (1.0 - even_rate)
+        conf = 0.50 + (dom_rate - 0.5) * 1.1  # 0.5→0.5, 0.7→0.72
+        if streak >= 3 and ((last_even and dominant_even) or (not last_even and not dominant_even)):
+            conf += min(0.12, 0.03 * streak)
+        # Fade if alternating (low streak despite bias)
+        if streak <= 1 and 0.45 < even_rate < 0.55:
+            conf *= 0.75
+        conf = max(0.0, min(0.95, conf))
+        return {
+            "even": dominant_even,
+            "even_rate": even_rate,
+            "streak": streak,
+            "n": len(digits),
+            "last_even": last_even,
+        }, float(conf)
+
     def generate_from_ticks(
         self,
         ticks: Sequence[Dict[str, Any]],
@@ -187,16 +227,16 @@ class SignalGenerator:
 
         candidates: List[Tuple[float, str]] = []
 
-        # Parity contracts
+        # Parity contracts (Even/Odd) — strong when parity signal aligns
         if "DIGITEVEN" in allowed:
-            score = confidence if parity_even else confidence * 0.3
+            score = confidence * (1.05 if parity_even else 0.28)
             if self.prefer_parity and parity_even:
-                score += 0.05
+                score += 0.08
             candidates.append((score, "DIGITEVEN"))
         if "DIGITODD" in allowed:
-            score = confidence if not parity_even else confidence * 0.3
+            score = confidence * (1.05 if not parity_even else 0.28)
             if self.prefer_parity and not parity_even:
-                score += 0.05
+                score += 0.08
             candidates.append((score, "DIGITODD"))
 
         # Over/Under: high digits favor OVER@6 (7-9), low favor UNDER@4 (0-3)

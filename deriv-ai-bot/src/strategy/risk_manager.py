@@ -1,9 +1,22 @@
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalize naive datetimes to UTC-aware for safe comparisons."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 @dataclass
@@ -22,6 +35,11 @@ class RiskManager:
     Centralized risk management.
 
     Tracks daily PnL, consecutive losses, pauses, stake limits, and open-trade caps.
+
+    Pause semantics:
+      - After max_consecutive_losses, trading pauses for trade_pause_minutes.
+      - When the timer expires, the loss streak is RESET and trading resumes
+        automatically (so we do not re-enter pause forever).
     """
 
     def __init__(
@@ -49,10 +67,14 @@ class RiskManager:
         self.trades_today: int = 0
         self.wins_today: int = 0
         self.losses_today: int = 0
-        self.last_reset_date = datetime.now().date()
+        self.last_reset_date = _utcnow().date()
         self.paused_until: Optional[datetime] = None
+        self.pause_reason: str = ""
         self.session_start_balance: Optional[float] = None
         self.last_known_balance: Optional[float] = None
+        # Popped by orchestrator after auto-resume to send Telegram notice
+        self.pending_auto_resume: Optional[Dict[str, Any]] = None
+        self.auto_resume_count: int = 0
 
     def set_session_balance(self, balance: float) -> None:
         """Record starting balance once per session (or after reconnect)."""
@@ -64,7 +86,7 @@ class RiskManager:
         self.last_known_balance = float(balance)
 
     def _maybe_reset_daily(self) -> None:
-        today = datetime.now().date()
+        today = _utcnow().date()
         if today != self.last_reset_date:
             logger.info(
                 "New trading day — resetting daily risk counters (prev pnl=%.2f)",
@@ -78,25 +100,78 @@ class RiskManager:
             # Do not clear consecutive_losses across midnight by default;
             # only clear pause if expired (checked elsewhere).
 
+    def _expire_pause_if_due(self) -> bool:
+        """
+        If a timed pause has finished, clear it and reset the loss streak.
+
+        Returns True if an auto-resume just happened.
+        """
+        until = _as_aware(self.paused_until)
+        if until is None:
+            return False
+        now = _utcnow()
+        if now < until:
+            return False
+
+        prev_streak = self.consecutive_losses
+        reason = self.pause_reason or "cooldown"
+        self.paused_until = None
+        self.pause_reason = ""
+        # CRITICAL: without this, can_trade re-fires pause forever
+        self.consecutive_losses = 0
+        self.auto_resume_count += 1
+        self.pending_auto_resume = {
+            "at": now.isoformat(),
+            "previous_streak": prev_streak,
+            "reason": reason,
+            "count": self.auto_resume_count,
+        }
+        logger.info(
+            "Cooldownoldown expired — auto-resume (cleared streak %s → 0, reason=%s)",
+            prev_streak,
+            reason,
+        )
+        return True
+
     def is_paused(self) -> bool:
-        if self.paused_until and datetime.now() < self.paused_until:
+        self._expire_pause_if_due()
+        until = _as_aware(self.paused_until)
+        if until is not None and _utcnow() < until:
             return True
-        if self.paused_until and datetime.now() >= self.paused_until:
-            self.paused_until = None
         return False
 
     def pause(self, minutes: Optional[int] = None, reason: str = "") -> None:
         mins = minutes if minutes is not None else self.trade_pause_minutes
-        self.paused_until = datetime.now() + timedelta(minutes=mins)
+        # Don't stack / extend forever if already paused for the same reason
+        if self.is_paused() and self.pause_reason == reason:
+            return
+        self.paused_until = _utcnow() + timedelta(minutes=mins)
+        self.pause_reason = reason or "manual"
         logger.warning(
-            "Trading paused for %s minutes%s",
+            "Trading paused for %s minutes%s until %s",
             mins,
             f" ({reason})" if reason else "",
+            self.paused_until.isoformat(),
         )
 
-    def resume(self) -> None:
+    def resume(self, *, reset_streak: bool = True) -> None:
+        """Clear timed risk pause so trading can continue immediately."""
         self.paused_until = None
-        logger.info("Trading pause cleared.")
+        self.pause_reason = ""
+        if reset_streak:
+            # Allow operator override of cooldown after consecutive losses
+            self.consecutive_losses = 0
+        self.pending_auto_resume = None
+        logger.info(
+            "Trading pause cleared (reset_streak=%s).",
+            reset_streak,
+        )
+
+    def consume_auto_resume(self) -> Optional[Dict[str, Any]]:
+        """Return and clear the last auto-resume event (if any)."""
+        evt = self.pending_auto_resume
+        self.pending_auto_resume = None
+        return evt
 
     def daily_loss_amount(self) -> float:
         """Positive number = money lost today (net)."""
@@ -120,6 +195,8 @@ class RiskManager:
         proposed_stake: optional stake to validate affordability / size.
         """
         self._maybe_reset_daily()
+        # Auto-resume if cooldown finished (resets consecutive_losses)
+        self._expire_pause_if_due()
 
         if account_balance is None:
             return RiskDecision(False, "balance_unknown")
@@ -133,8 +210,9 @@ class RiskManager:
         if self.session_start_balance is None:
             self.set_session_balance(balance)
 
-        if self.is_paused():
-            remaining = (self.paused_until - datetime.now()).total_seconds() / 60.0  # type: ignore[operator]
+        until = _as_aware(self.paused_until)
+        if until is not None and _utcnow() < until:
+            remaining = (until - _utcnow()).total_seconds() / 60.0
             return RiskDecision(False, f"paused ({remaining:.0f}m left)")
 
         if balance < self.min_balance:
@@ -151,11 +229,19 @@ class RiskManager:
                 f"daily_loss_limit ({lost:.2f} >= {daily_max:.2f})",
             )
 
+        # Only pause from a fresh loss path (record_trade_result). Here we just block
+        # if somehow still over the threshold without an active timer.
         if self.consecutive_losses >= self.max_consecutive_losses:
-            self.pause(reason=f"{self.consecutive_losses} consecutive losses")
+            self.pause(
+                reason=f"{self.consecutive_losses} consecutive losses",
+            )
+            until = _as_aware(self.paused_until)
+            remaining = (
+                (until - _utcnow()).total_seconds() / 60.0 if until else self.trade_pause_minutes
+            )
             return RiskDecision(
                 False,
-                f"max_consecutive_losses ({self.consecutive_losses})",
+                f"max_consecutive_losses ({self.consecutive_losses}) → pause {remaining:.0f}m",
             )
 
         if open_trades >= self.max_open_trades:
@@ -255,6 +341,11 @@ class RiskManager:
             logger.info("Push recorded pnl=0 daily_pnl=%.2f", self.daily_pnl)
 
     def snapshot(self) -> dict:
+        self._expire_pause_if_due()
+        until = _as_aware(self.paused_until)
+        remaining_m = None
+        if until is not None and _utcnow() < until:
+            remaining_m = round((until - _utcnow()).total_seconds() / 60.0, 1)
         return {
             "daily_pnl": self.daily_pnl,
             "daily_loss": self.daily_loss_amount(),
@@ -263,10 +354,15 @@ class RiskManager:
             "wins_today": self.wins_today,
             "losses_today": self.losses_today,
             "paused": self.is_paused(),
-            "paused_until": self.paused_until.isoformat() if self.paused_until else None,
+            "paused_until": until.isoformat() if until else None,
+            "pause_reason": self.pause_reason or None,
+            "pause_remaining_min": remaining_m,
+            "auto_resume_count": self.auto_resume_count,
             "session_start_balance": self.session_start_balance,
             "last_known_balance": self.last_known_balance,
             "max_open_trades": self.max_open_trades,
+            "max_consecutive_losses": self.max_consecutive_losses,
+            "trade_pause_minutes": self.trade_pause_minutes,
             "min_balance": self.min_balance,
             "max_stake_pct": self.max_stake_pct,
         }
