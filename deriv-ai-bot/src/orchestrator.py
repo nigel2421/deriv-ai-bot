@@ -392,6 +392,8 @@ class TradingOrchestrator:
                     adj = self.learner.adjust_confidence(
                         symbol, signal_type, conf or raw_conf
                     )
+                    # Rec #8 Phase 2: optional calibration deflation (no-op in Phase 1)
+                    adj = self.calibration.apply_calibration(adj)
                     if adj >= min_conf:
                         # Rec #6: check pattern decay before adding candidate
                         block_decay, decay_reason = self.learner.should_block_for_decay(
@@ -402,43 +404,49 @@ class TradingOrchestrator:
                                 "PatternDecay block %s %s: %s",
                                 symbol, signal_type, decay_reason,
                             )
-                            continue
-                        # Rec #6: record scan-time strength for decay tracking
-                        self.learner.record_pattern_strength(
-                            symbol, signal_type, conf or raw_conf
-                        )
-                        try:
-                            pred_digit = int(pred.get("digit")) if pred.get("digit") is not None else None
-                        except (TypeError, ValueError):
-                            pred_digit = None
-                        intent = self.strategy_engine.apply_signal(
-                            symbol=symbol,
-                            signal_type=signal_type,
-                            signal_barrier=signal_barrier,
-                            confidence=adj,
-                            predicted_digit=pred_digit,
-                            ticks=ticks,
-                        )
-                        if intent:
-                            intent["family"] = "digits"
-                            intent["raw_confidence"] = conf or raw_conf
-                            intent["regime"] = dig_reg
-                            intent["learn_bonus"] = self.learner.selection_bonus(
-                                symbol, intent["contract_type"]
+                        else:
+                            # Rec #6: record scan-time strength for decay tracking
+                            self.learner.record_pattern_strength(
+                                symbol, signal_type, conf or raw_conf
                             )
-                            intent["trend_strength"] = 0.0
-                            # Rec #9: payout_rate placeholder (updated after proposal)
-                            intent["payout_rate"] = DEFAULT_PAYOUT_RATE
-                            # Rec #4: MOR velocity bonus
-                            intent["velocity_bonus"] = self.mor_tracker.get_velocity_bonus(symbol)
-                            # Rec #1: confidence level metadata
-                            intent["confidence_level"] = self.learner.confidence_level(
-                                symbol, intent["contract_type"]
+                            try:
+                                pred_digit = (
+                                    int(pred.get("digit"))
+                                    if pred.get("digit") is not None
+                                    else None
+                                )
+                            except (TypeError, ValueError):
+                                pred_digit = None
+                            intent = self.strategy_engine.apply_signal(
+                                symbol=symbol,
+                                signal_type=signal_type,
+                                signal_barrier=signal_barrier,
+                                confidence=adj,
+                                predicted_digit=pred_digit,
+                                ticks=ticks,
                             )
-                            intent["historical_support"] = self.learner.historical_support(
-                                symbol, intent["contract_type"]
-                            )
-                            candidates.append(intent)
+                            if intent:
+                                intent["family"] = "digits"
+                                intent["raw_confidence"] = conf or raw_conf
+                                intent["regime"] = dig_reg
+                                intent["learn_bonus"] = self.learner.selection_bonus(
+                                    symbol, intent["contract_type"]
+                                )
+                                intent["trend_strength"] = 0.0
+                                # Rec #9: payout_rate placeholder (updated after proposal)
+                                intent["payout_rate"] = DEFAULT_PAYOUT_RATE
+                                # Rec #4: MOR velocity bonus
+                                intent["velocity_bonus"] = self.mor_tracker.get_velocity_bonus(
+                                    symbol
+                                )
+                                # Rec #1: confidence level metadata
+                                intent["confidence_level"] = self.learner.confidence_level(
+                                    symbol, intent["contract_type"]
+                                )
+                                intent["historical_support"] = self.learner.historical_support(
+                                    symbol, intent["contract_type"]
+                                )
+                                candidates.append(intent)
             elif skip_d:
                 logger.debug("Skip digits %s: %s", symbol, dig_reason)
 
@@ -453,6 +461,8 @@ class TradingOrchestrator:
                     rf_conf *= 1.0 - (chop - 0.45) * 0.8
                 if rf_type and rf_type in rf_allowed:
                     adj = self.learner.adjust_confidence(symbol, rf_type, rf_conf)
+                    # Rec #8 Phase 2: optional calibration deflation (no-op in Phase 1)
+                    adj = self.calibration.apply_calibration(adj)
                     if adj >= min_conf:
                         # Rec #6: check pattern decay for rise/fall
                         block_decay, decay_reason = self.learner.should_block_for_decay(
@@ -536,37 +546,56 @@ class TradingOrchestrator:
                     adj = self.learner.adjust_confidence(
                         symbol, msig["contract_type"], float(msig["confidence"])
                     )
+                    # Rec #8 Phase 2: optional calibration deflation (no-op in Phase 1)
+                    adj = self.calibration.apply_calibration(adj)
                     if adj >= need:
-                        intent = self.strategy_engine.apply_signal(
-                            symbol=symbol,
-                            signal_type=msig["contract_type"],
-                            signal_barrier=None,
-                            confidence=adj,
+                        # Rec #6: pattern decay gate for minute horizon too
+                        block_decay, decay_reason = self.learner.should_block_for_decay(
+                            symbol,
+                            msig["contract_type"],
+                            current_strength=float(msig["confidence"]),
                         )
-                        if intent:
-                            intent["family"] = "minute_rise_fall"
-                            intent["horizon"] = "minute"
-                            intent["duration"] = msig["duration"]
-                            intent["duration_unit"] = "m"
-                            intent["raw_confidence"] = msig["confidence"]
-                            intent["minute_details"] = msig.get("details")
-                            intent["learn_bonus"] = self.learner.selection_bonus(
-                                symbol, intent["contract_type"]
-                            )
-                            intent["trend_strength"] = float(
-                                (msig.get("details") or {}).get("call_pts")
-                                or (msig.get("details") or {}).get("put_pts")
-                                or 0
-                            ) / 5.0
-                            candidates.append(intent)
+                        if block_decay:
                             logger.info(
-                                "Minute candidate %s %s conf=%.2f dur=%sm notes=%s",
+                                "PatternDecay block %s %s (minute): %s",
+                                symbol, msig["contract_type"], decay_reason,
+                            )
+                        else:
+                            self.learner.record_pattern_strength(
                                 symbol,
                                 msig["contract_type"],
-                                adj,
-                                msig["duration"],
-                                (msig.get("details") or {}).get("notes"),
+                                float(msig["confidence"]),
                             )
+                            intent = self.strategy_engine.apply_signal(
+                                symbol=symbol,
+                                signal_type=msig["contract_type"],
+                                signal_barrier=None,
+                                confidence=adj,
+                            )
+                            if intent:
+                                intent["family"] = "minute_rise_fall"
+                                intent["horizon"] = "minute"
+                                intent["duration"] = msig["duration"]
+                                intent["duration_unit"] = "m"
+                                intent["raw_confidence"] = msig["confidence"]
+                                intent["minute_details"] = msig.get("details")
+                                intent["learn_bonus"] = self.learner.selection_bonus(
+                                    symbol, intent["contract_type"]
+                                )
+                                intent["trend_strength"] = float(
+                                    (msig.get("details") or {}).get("call_pts")
+                                    or (msig.get("details") or {}).get("put_pts")
+                                    or 0
+                                ) / 5.0
+                                candidates.append(intent)
+                                logger.info(
+                                    "Minute candidate %s %s conf=%.2f dur=%sm notes=%s",
+                                    symbol,
+                                    msig["contract_type"],
+                                    adj,
+                                    msig["duration"],
+                                    (msig.get("details") or {}).get("notes"),
+                                )
 
             for intent in candidates:
                 # Rec #4: Update MOR tracker for this symbol (scored candidate)
@@ -1073,8 +1102,20 @@ class TradingOrchestrator:
             "status": status.lower(),
         })
 
-        # ---- Rec #10: AI Auditor ----
-        self.ai_auditor.check_and_run(self.learner.total_recorded)
+        # ---- Rec #10: AI Auditor (persistent cumulative closes) ----
+        # Minor every 100, major every 1000 — uses learner.total_recorded
+        # which survives restarts via data/learning_state.json
+        audit_report = self.ai_auditor.check_and_run(self.learner.total_recorded)
+        if audit_report:
+            # Phase 2 calibration gate evaluates on every audit cycle
+            self.calibration.audit_and_maybe_enable_deflation()
+            # Major audit includes calibration snapshot for DeepSeek / meta review
+            if audit_report.get("type") == "major":
+                audit_report["calibration"] = self.calibration.snapshot()
+                try:
+                    self.ai_auditor._save_report(audit_report)
+                except Exception:
+                    pass
         bal_now = self.client.get_balance()
         msg = self.telegram.format_trade_closed(
             status=status,

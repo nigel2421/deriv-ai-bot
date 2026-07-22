@@ -15,3 +15,8 @@ deriv-ai-bot/
 .vscode/
 tests/
 docs/
+
+# XML bot files
+xml bots/
+*.xml
+*.XML

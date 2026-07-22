@@ -140,15 +140,15 @@ class AIAuditor:
                     f"Increase '{feature}' weight in trade_selector — "
                     f"strong positive correlation (+{contrib:.1f}%)"
                 )
-            elif contrib < -5:
-                recs.append(
-                    f"Consider reducing '{feature}' weight — "
-                    f"negative contribution ({contrib:.1f}%)"
-                )
             elif contrib < -10:
                 recs.append(
                     f"WARNING: '{feature}' is actively hurting performance "
                     f"({contrib:.1f}%). Consider removing."
+                )
+            elif contrib < -5:
+                recs.append(
+                    f"Consider reducing '{feature}' weight — "
+                    f"negative contribution ({contrib:.1f}%)"
                 )
 
         if overall_wr < 0.50:

@@ -525,7 +525,7 @@ async def root(_: Request) -> HTMLResponse:
 
   <div class="card">
     <h2>&#128202; Probability Engine &amp; HPP</h2>
-    <p class="muted">Confidence level = LOW (&lt;30 trades) / MEDIUM (30-99) / HIGH (&ge;100). Pattern decay tracks signal quality trend.</p>
+    <p class="muted">Confidence level = LOW (&lt;30 trades) / MEDIUM (30-99) / HIGH (&ge;100). Pattern decay: Watch -10 / Warning -15 / Block &lt;-20 + clarity &lt;75%.</p>
     {_fmt_probability_panel(s)}
   </div>
 
@@ -551,12 +551,12 @@ async def root(_: Request) -> HTMLResponse:
   <div class="card panel-pair" style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
     <div>
       <h2>&#127919; Calibration</h2>
-      <p class="muted">Predicted confidence vs actual win rate. Phase 2 auto-deflation after 1000+ trades.</p>
+      <p class="muted">Phase 1: display + alert only. Phase 2 auto-deflation after &gt;1000 trades, error &gt;15%, 3 consecutive audits.</p>
       {_fmt_calibration_panel(s)}
     </div>
     <div>
       <h2>&#129302; AI Auditor</h2>
-      <p class="muted">Every 100 trades: feature attribution. Every 1000: deep audit.</p>
+      <p class="muted">Persistent cumulative closes across restarts. Every 100: standard audit. Every 1000: deep audit.</p>
       {_fmt_auditor_panel(s)}
     </div>
   </div>
@@ -724,7 +724,11 @@ def _fmt_calibration_panel(s: dict) -> str:
     for r in rows_data:
         status = r.get("status", "")
         sc = r.get("status_code", "")
-        st_cls = "ok" if sc == "good" else ("bad" if sc in ("overconfident", "underconfident") else ("warn" if sc == "watch" else "muted"))
+        st_cls = (
+            "ok" if sc == "good"
+            else ("bad" if sc in ("overconfident", "severely_overconfident", "underconfident")
+                  else ("warn" if sc == "watch" else "muted"))
+        )
         pred = r.get("predicted_avg")
         actual = r.get("actual_wr")
         err = r.get("error")

@@ -167,8 +167,11 @@ class CalibrationTracker:
 
     def status_for(self, bucket: str) -> Tuple[str, str]:
         """
-        Returns (status_code, display_label) for a bucket.
-        status_code: "good" | "watch" | "overconfident" | "underconfident" | "insufficient"
+        Phase 1 display labels (no probability mutation).
+
+        status_code:
+          "good" | "watch" | "overconfident" | "severely_overconfident"
+          | "underconfident" | "insufficient"
         """
         err = self.calibration_error(bucket)
         n = int(self.buckets.get(bucket, {}).get("n", 0))
@@ -182,6 +185,9 @@ class CalibrationTracker:
         if abs_err < 0.10:
             return "watch", "Watch"
         if err > 0:
+            # Display-only severity: >15% matches Phase 2 error threshold
+            if err > PHASE2_ERROR_THRESHOLD:
+                return "severely_overconfident", "SEVERELY OVERCONFIDENT"
             return "overconfident", "OVERCONFIDENT"
         return "underconfident", "Underconfident"
 
@@ -208,10 +214,14 @@ class CalibrationTracker:
 
     def audit_and_maybe_enable_deflation(self) -> None:
         """
-        Called at each major audit (every 1000 trades).
-        Evaluates whether Phase 2 auto-deflation should activate per bucket.
+        Called after each AI audit (every 100 closed trades).
+
+        Phase 2 auto-deflation gates (approved):
+            cumulative_trades > 1000
+            AND calibration_error > 15%
+            AND that condition holds for 3 consecutive audits
         """
-        if self.cumulative_trades < PHASE2_MIN_TRADES:
+        if self.cumulative_trades <= PHASE2_MIN_TRADES:
             return
 
         updated = False
@@ -221,29 +231,35 @@ class CalibrationTracker:
             if err is None or n < 50:
                 continue
             b = self.buckets[bucket]
-            if abs(err) > PHASE2_ERROR_THRESHOLD and err > 0:
-                # Overconfident — increment consecutive counter
+            if err > PHASE2_ERROR_THRESHOLD:
+                # Overconfident beyond 15% — increment consecutive audit counter
                 b["consecutive_overconfident"] = int(b.get("consecutive_overconfident", 0)) + 1
             else:
                 b["consecutive_overconfident"] = 0
 
             consec = int(b.get("consecutive_overconfident", 0))
             if consec >= PHASE2_CONSECUTIVE_AUDITS:
-                # Activate deflation for this bucket
+                # Activate deflation for this bucket:
+                # Adjusted = Raw * (actual / predicted)
                 actual = self.actual_win_rate(bucket)
                 pred = self.avg_predicted(bucket)
-                if pred and pred > 0:
+                if pred and pred > 0 and actual is not None:
                     factor = round(actual / pred, 4)
+                    # Never inflate confidence; only deflate
+                    factor = min(1.0, max(0.1, factor))
                     self.calibration_factors[bucket] = factor
                     self.auto_deflation_enabled = True
                     updated = True
                     logger.warning(
                         "Calibration Phase 2 ACTIVATED for bucket %s: "
-                        "factor=%.4f (predicted=%.3f actual=%.3f)",
-                        bucket, factor, pred, actual,
+                        "factor=%.4f (predicted=%.3f actual=%.3f, consec=%d)",
+                        bucket, factor, pred, actual, consec,
                     )
 
         if updated:
+            self.save()
+        else:
+            # Persist consecutive counters even when not yet activated
             self.save()
 
     def snapshot(self) -> Dict[str, Any]:

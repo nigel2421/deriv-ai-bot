@@ -15,3 +15,8 @@ docs/
 tests/
 *.md
 !requirements-cloud.txt
+
+# XML bot files
+xml bots/
+*.xml
+*.XML

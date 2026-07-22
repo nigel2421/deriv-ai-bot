@@ -306,12 +306,14 @@ class AdaptiveLearner:
         if len(hist) < 20:
             return "unknown", "Unknown (insufficient data)"
 
+        # Tiered thresholds (approved):
+        #   > -10 healthy | -10..-15 watch | -15..-20 warning | < -20 block
         decay = self.pattern_decay(symbol, contract_type)
         if decay > DECAY_WATCH:
             return "healthy", f"Healthy ({decay:+.1f})"
         if decay > DECAY_WARNING:
             return "watch", f"Watch ({decay:+.1f})"
-        if decay > DECAY_BLOCK:
+        if decay >= DECAY_BLOCK:
             return "warning", f"Warning ({decay:+.1f})"
         return "block", f"Block ({decay:+.1f})"
 
