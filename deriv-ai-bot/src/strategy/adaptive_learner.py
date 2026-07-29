@@ -187,10 +187,17 @@ class AdaptiveLearner:
         """
         Multiplier applied to raw confidence.
         Always-on: even 1 sample nudges slightly; more samples -> stronger effect.
+
+        Also applies a mild global cold-start penalty when the book is underwater
+        so the bot stops re-entering weak setups at inflated confidence.
         """
         n = self.samples(symbol, contract_type)
         wr = self.win_rate(symbol, contract_type)
         if n == 0:
+            # Unproven setup: slight haircut while global book is cold/underwater
+            g_n = self.global_wins + self.global_losses
+            if g_n >= 10 and self.global_wins / max(1, g_n) < 0.48:
+                return 0.92
             return 1.0
 
         # Trust grows with samples (always-on learning)
@@ -203,9 +210,14 @@ class AdaptiveLearner:
         if int(s.get("streak_win", 0)) >= 3:
             mult *= 1.06
         if int(s.get("streak_loss", 0)) >= 2:
-            mult *= 0.90
+            mult *= 0.88  # stronger cut after 2 losses (was 0.90)
 
-        return float(max(0.65, min(1.28, mult)))
+        # Digit parity setups: don't let learning amplify already-noisy signals
+        ct = str(contract_type or "").upper()
+        if ct in {"DIGITEVEN", "DIGITODD"} and n < 20:
+            mult = min(mult, 1.02)
+
+        return float(max(0.60, min(1.20, mult)))
 
     def adjust_confidence(
         self, symbol: str, contract_type: str, confidence: float

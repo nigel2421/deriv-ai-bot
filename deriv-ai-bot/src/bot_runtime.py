@@ -74,8 +74,15 @@ class BotRuntime:
             "stake_mode": risk.get("stake_mode"),
             "enable_minute": risk.get("enable_minute"),
             "minute_duration": risk.get("minute_duration"),
+            "fx_minute_duration": risk.get("fx_minute_duration"),
             "recent_trades": risk.get("recent_trades") or [],
             "open_trade_details": risk.get("open_trade_details") or [],
+            "calibration": risk.get("calibration") or {},
+            "ai_auditor": risk.get("ai_auditor"),
+            "offer_gate": risk.get("offer_gate") or {},
+            "transition_matrix": risk.get("transition_matrix") or {},
+            "mor": risk.get("mor") or {},
+            "correlation": risk.get("correlation") or {},
             "risk": {
                 k: risk.get(k)
                 for k in (
@@ -96,6 +103,11 @@ class BotRuntime:
                     "max_consecutive_losses",
                     "trade_pause_minutes",
                     "min_confidence",
+                    "session_start_balance",
+                    "session_stop_loss_pct",
+                    "session_target_rr",
+                    "session_stop_hit",
+                    "session_target_hit",
                 )
             },
         }

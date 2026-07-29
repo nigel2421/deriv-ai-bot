@@ -194,26 +194,95 @@ class TradeExecutor:
         execute: bool = True,
         timeout: float = 20.0,
         min_net_return: Optional[float] = None,
+        try_duration_fallbacks: bool = True,
     ) -> Optional[Dict[str, Any]]:
         """
         Full path: proposal → payout gate → (optional) buy.
 
         When execute=False, only requests a proposal (paper / dry-run).
         When min_net_return is set, skips buy if (payout-ask)/ask is below it.
+        On "duration not offered" / closed-market style errors, tries alternate
+        durations so Boom/Crash/FX keep trading instead of dead-ending.
         Returns a result dict with keys: proposal, buy (optional), contract_id.
         """
-        self.last_error = None
-        proposal = await self.send_proposal(
-            symbol,
-            contract_type,
-            stake,
-            barrier=barrier,
-            currency=currency,
-            duration=duration,
-            duration_unit=duration_unit or "t",
-            timeout=timeout,
+        from src.strategy.market_offer_gate import (
+            classify_offer_error,
+            duration_fallbacks,
+            REASON_DURATION,
+            REASON_MARKET_CLOSED,
+            REASON_UNAVAILABLE,
         )
+
+        self.last_error = None
+        attempts: list = [(int(duration), str(duration_unit or "t"))]
+        if try_duration_fallbacks:
+            for alt in duration_fallbacks(duration, duration_unit or "t", symbol=symbol):
+                if alt not in attempts:
+                    attempts.append(alt)
+
+        proposal = None
+        used_duration = int(duration)
+        used_unit = str(duration_unit or "t")
+        last_reason = None
+        for i, (dur, unit) in enumerate(attempts[:6]):  # cap API spam
+            proposal = await self.send_proposal(
+                symbol,
+                contract_type,
+                stake,
+                barrier=barrier,
+                currency=currency,
+                duration=dur,
+                duration_unit=unit,
+                timeout=timeout,
+            )
+            if proposal:
+                used_duration, used_unit = dur, unit
+                if i > 0:
+                    logger.info(
+                        "Duration fallback ok %s %s → %s%s (was %s%s)",
+                        symbol,
+                        contract_type,
+                        dur,
+                        unit,
+                        duration,
+                        duration_unit,
+                    )
+                break
+            err = self.last_error or ""
+            last_reason = classify_offer_error(err)
+            if last_reason not in {
+                REASON_DURATION,
+                REASON_MARKET_CLOSED,
+                REASON_UNAVAILABLE,
+            }:
+                # Non-offer error (balance, auth, etc.) — stop retrying
+                break
+            logger.warning(
+                "Offer rejected %s %s %s%s: %s — trying next duration",
+                symbol,
+                contract_type,
+                dur,
+                unit,
+                err[:120],
+            )
+
         if not proposal:
+            if last_reason:
+                return {
+                    "proposal": None,
+                    "buy": None,
+                    "contract_id": None,
+                    "symbol": symbol,
+                    "contract_type": contract_type,
+                    "stake": stake,
+                    "barrier": barrier,
+                    "duration": used_duration,
+                    "duration_unit": used_unit,
+                    "executed": False,
+                    "offer_failed": True,
+                    "offer_reason": last_reason,
+                    "error": self.last_error,
+                }
             return None
 
         metrics = self.payout_metrics(proposal, stake)
@@ -225,8 +294,8 @@ class TradeExecutor:
             "contract_type": contract_type,
             "stake": stake,
             "barrier": barrier,
-            "duration": duration,
-            "duration_unit": duration_unit,
+            "duration": used_duration,
+            "duration_unit": used_unit,
             "executed": False,
             "ask_price": metrics["ask"],
             "payout": metrics["payout"],

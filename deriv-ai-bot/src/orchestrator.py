@@ -39,6 +39,13 @@ from src.strategy.transition_matrix import TransitionMatrix
 from src.strategy.calibration_tracker import CalibrationTracker
 from src.strategy.correlation_filter import CorrelationFilter
 from src.strategy.ai_auditor import AIAuditor
+from src.strategy.market_offer_gate import MarketOfferGate
+from src.strategy.session_hours import (
+    is_fx_symbol,
+    is_likely_session_open,
+    is_spike_synthetic,
+    preferred_minute_duration,
+)
 from src.ai.predictor import Predictor
 from src.utils.telegram_bot import TelegramBot
 from datetime import datetime, timezone
@@ -110,6 +117,7 @@ class TradingOrchestrator:
             history_path=Path("data/trade_history.jsonl"),
             report_path=Path("data/auditor_report.json"),
         )
+        self.offer_gate = MarketOfferGate()
         # Persistent trade history file (append-only JSONL) — Recs #5, #8, #10
         self._trade_history_path = Path("data/trade_history.jsonl")
         self._trade_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -295,7 +303,31 @@ class TradingOrchestrator:
         signals = []
         min_conf = self.min_confidence
 
+        # Cold-start hardening: when overall learning is underwater, demand more edge
+        cold_penalty = 0.0
+        g_w = int(getattr(self.learner, "global_wins", 0) or 0)
+        g_l = int(getattr(self.learner, "global_losses", 0) or 0)
+        g_n = g_w + g_l
+        if g_n >= 8 and g_w / max(1, g_n) < 0.45:
+            cold_penalty = 0.04
+            min_conf = min(0.92, min_conf + cold_penalty)
+            logger.info(
+                "Cold/underwater learning gate: min_conf raised to %.2f (W=%s L=%s)",
+                min_conf,
+                g_w,
+                g_l,
+            )
+
         for symbol in self.active_symbols:
+            # Soft session gate (FX weekend etc.)
+            open_ok, session_reason = is_likely_session_open(symbol)
+            if not open_ok:
+                logger.debug("Skip %s: %s", symbol, session_reason)
+                continue
+            if self.offer_gate.is_symbol_blocked(symbol):
+                logger.debug("Skip %s: offer_gate symbol blocked", symbol)
+                continue
+
             ticks = self.fetcher.get_recent_data(symbol, 120)
             if not ticks:
                 logger.debug("No ticks yet for %s", symbol)
@@ -316,8 +348,13 @@ class TradingOrchestrator:
             ]
             digit_allowed = [t for t in allowed if is_digit_contract(t)]
             rf_allowed = [t for t in allowed if is_rise_fall(t)]
+            # FX: rise/fall only (no last-digit contracts)
+            if is_fx_symbol(symbol):
+                digit_allowed = []
+                if not rf_allowed:
+                    rf_allowed = ["CALL", "PUT"]
             # If allow-list empty, permit digits (incl. even/odd) + rise/fall
-            if not allowed:
+            if not allowed and not is_fx_symbol(symbol):
                 digit_allowed = [
                     "DIGITOVER",
                     "DIGITUNDER",
@@ -329,8 +366,13 @@ class TradingOrchestrator:
             candidates: list = []
 
             # ---- Early regime skip (choppy / whipsaw) ----
+            # FX: slightly looser chop gate (real FX is noisier than synthetics)
             skip_d, dig_reason, dig_reg = should_skip_digits(ticks)
             skip_rf, rf_reason, rf_reg = should_skip_rise_fall(ticks)
+            if is_fx_symbol(symbol) and skip_rf:
+                chop = float(rf_reg.get("chop_score") or 1.0)
+                if chop < 0.72:
+                    skip_rf, rf_reason = False, "fx_chop_soft_pass"
             if skip_d and skip_rf:
                 logger.info(
                     "Skip %s both families: digits=%s rf=%s chop=%.2f",
@@ -483,6 +525,14 @@ class TradingOrchestrator:
                             )
                             if intent:
                                 intent["family"] = "rise_fall"
+                                # FX XML is 30m — keep unit so we don't default to ticks
+                                if is_fx_symbol(symbol):
+                                    intent["duration"] = preferred_minute_duration(
+                                        symbol, self.minute_duration
+                                    )
+                                    intent["duration_unit"] = "m"
+                                    intent["horizon"] = "minute"
+                                    intent["family"] = "minute_rise_fall"
                                 intent["raw_confidence"] = rf_conf
                                 intent["trend"] = trend
                                 intent["regime"] = rf_reg
@@ -534,12 +584,19 @@ class TradingOrchestrator:
                 )
 
             # ---- Minute Rise/Fall (candles + EMA/RSI) ----
-            if self.enable_minute and rf_allowed and not skip_rf:
+            # Boom/Crash/Jump etc reject multi-minute durations → ticks only.
+            # FX uses long horizon (30–40m) via preferred_minute_duration().
+            minute_ok = not is_spike_synthetic(symbol)
+            if self.enable_minute and rf_allowed and not skip_rf and minute_ok:
+                m_dur = preferred_minute_duration(symbol, self.minute_duration)
+                # FX long holds: slightly lower conf floor (trend edge compounds)
                 need = max(self.minute_min_conf, min_conf * 0.95)
+                if is_fx_symbol(symbol):
+                    need = max(0.70, min(need, self.minute_min_conf))
                 msig = analyze_minute(
                     ticks,
-                    period_sec=60,
-                    duration_minutes=self.minute_duration,
+                    period_sec=60 if not is_fx_symbol(symbol) else 60,
+                    duration_minutes=m_dur,
                     min_confidence=need,
                 )
                 if msig and msig["contract_type"] in rf_allowed:
@@ -788,11 +845,19 @@ class TradingOrchestrator:
             duration_unit=duration_unit,
             execute=self.execute_trades,
             min_net_return=self.min_net_return if self.execute_trades else None,
+            try_duration_fallbacks=True,
         )
 
         if not result:
             err = self.executor.last_error or "unknown"
             logger.error("Trade path failed: %s", err)
+            self.offer_gate.note_error(
+                best["symbol"],
+                err,
+                contract_type=best["contract_type"],
+                duration=duration,
+                duration_unit=duration_unit,
+            )
             self._log_trade_event(
                 {
                     "status": "failed",
@@ -821,6 +886,52 @@ class TradingOrchestrator:
                 )
             )
             return None
+
+        # Offer rejected even after duration fallbacks
+        if result.get("offer_failed"):
+            err = result.get("error") or self.executor.last_error or "offer failed"
+            reason = result.get("offer_reason") or "other"
+            self.offer_gate.note_error(
+                best["symbol"],
+                err,
+                contract_type=best["contract_type"],
+                duration=result.get("duration") or duration,
+                duration_unit=result.get("duration_unit") or duration_unit,
+            )
+            self._log_trade_event(
+                {
+                    "status": "failed_offer",
+                    "symbol": best["symbol"],
+                    "contract_type": best["contract_type"],
+                    "stake": stake,
+                    "barrier": best.get("barrier"),
+                    "confidence": best.get("confidence"),
+                    "family": best.get("family"),
+                    "horizon": horizon,
+                    "duration": result.get("duration") or duration,
+                    "duration_unit": result.get("duration_unit") or duration_unit,
+                    "error": err,
+                    "offer_reason": reason,
+                }
+            )
+            logger.warning(
+                "failed_offer %s %s: %s (%s)",
+                best["symbol"],
+                best["contract_type"],
+                reason,
+                err[:120],
+            )
+            return result
+
+        # Successful quote path — clear any temporary blocks for this symbol
+        if result.get("proposal") or result.get("executed"):
+            self.offer_gate.note_success(best["symbol"])
+            # Keep duration/horizon in sync with whatever fallback actually worked
+            if result.get("duration") is not None:
+                duration = int(result["duration"])
+            if result.get("duration_unit"):
+                duration_unit = str(result["duration_unit"])
+                horizon = "minute" if duration_unit == "m" else "tick"
 
         if result.get("skipped_low_payout"):
             err = result.get("error") or self.executor.last_error or "payout too low"
@@ -1207,6 +1318,8 @@ class TradingOrchestrator:
             "mor": self.mor_tracker.snapshot(),
             "correlation": getattr(self, "_last_corr_snapshot", {}),
             "ai_auditor": self.ai_auditor.latest_report(),
+            "offer_gate": self.offer_gate.snapshot(),
+            "fx_minute_duration": preferred_minute_duration("frxEURUSD", self.minute_duration),
         }
 
     def _open_trade_details(self) -> list:

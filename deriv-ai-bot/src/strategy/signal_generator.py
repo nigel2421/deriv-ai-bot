@@ -109,15 +109,19 @@ class SignalGenerator:
             else:
                 break
 
-        # Bias toward dominant parity; boost on streak 3+ of same parity
+        # Bias toward dominant parity; boost on streak 3+ of same parity.
+        # CAP conf — live audit showed DIGITEVEN/ODD at 0.93–0.99 with ~20% WR.
+        # True edge on parity is modest; never claim near-certainty.
         dominant_even = even_rate >= 0.5
         dom_rate = even_rate if dominant_even else (1.0 - even_rate)
-        conf = 0.50 + (dom_rate - 0.5) * 1.1  # 0.5→0.5, 0.7→0.72
+        conf = 0.50 + (dom_rate - 0.5) * 0.9  # 0.5→0.5, 0.7→0.68
         if streak >= 3 and ((last_even and dominant_even) or (not last_even and not dominant_even)):
-            conf += min(0.12, 0.03 * streak)
+            conf += min(0.08, 0.02 * streak)
         # Fade if alternating (low streak despite bias)
         if streak <= 1 and 0.45 < even_rate < 0.55:
             conf *= 0.75
+        # Hard ceiling: parity is not a 95%+ edge
+        conf = min(0.82, conf)
         conf = max(0.0, min(0.95, conf))
         return {
             "even": dominant_even,

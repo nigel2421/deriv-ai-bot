@@ -42,6 +42,7 @@ class MarketRuntime:
         # adaptive | fixed | random — adaptive picks barrier from ticks + prediction
         self.barrier_mode = str(cfg.get("barrier_mode") or "adaptive").strip().lower()
         self.duration = int(cfg.get("duration", 5))
+        self.duration_unit = str(cfg.get("duration_unit") or "t").strip().lower() or "t"
 
         self.martingale: Optional[MartingaleStrategy] = None
         self.zuno: Optional[ZunoStrategy] = None
@@ -270,6 +271,7 @@ class StrategyEngine:
             "base_stake": runtime.base_stake,
             "stake": stake,
             "duration": runtime.duration,
+            "duration_unit": runtime.duration_unit,
             "predicted_digit": predicted_digit,
             "barrier_mode": runtime.barrier_mode,
             "strategy_snapshot": runtime.snapshot(),

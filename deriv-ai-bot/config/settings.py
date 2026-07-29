@@ -65,10 +65,11 @@ DERIV_OAUTH_TOKEN_URL = os.getenv(
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 MODE = os.getenv("MODE", "demo")
-# Diversified portfolio: classic + 1Hz indices (override via SYMBOLS env)
+# Diversified portfolio: classic + 1Hz + major FX (override via SYMBOLS env)
 _DEFAULT_SYMBOLS = (
     "R_10,R_25,R_50,R_75,R_100,"
-    "1HZ10V,1HZ25V,1HZ50V,1HZ75V,1HZ100V"
+    "1HZ10V,1HZ25V,1HZ50V,1HZ75V,1HZ100V,"
+    "frxEURUSD,frxGBPUSD"
 )
 SYMBOLS = [
     s.strip()
