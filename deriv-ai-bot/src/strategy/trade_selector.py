@@ -39,7 +39,11 @@ class TradeSelector:
 
         def score(s: Dict[str, Any]) -> float:
             # Primary: EV (expected value per unit stake)
-            ev = float(s.get("ev") or 0.0)
+            if "ev" in s and s["ev"] is not None:
+                ev = float(s["ev"])
+            else:
+                from src.strategy.ev_engine import compute_ev
+                ev = compute_ev(float(s.get("confidence") or 0.0))
 
             # HPP quality bonus (Rec #2 — already exists, now properly weighted)
             learn_bonus = float(s.get("learn_bonus") or 0.0)

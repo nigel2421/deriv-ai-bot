@@ -39,6 +39,7 @@ from src.strategy.transition_matrix import TransitionMatrix
 from src.strategy.calibration_tracker import CalibrationTracker
 from src.strategy.correlation_filter import CorrelationFilter
 from src.strategy.ai_auditor import AIAuditor
+from src.strategy.deepseek_advisor import DeepSeekAdvisor
 from src.strategy.market_offer_gate import MarketOfferGate
 from src.strategy.session_hours import (
     is_fx_symbol,
@@ -118,6 +119,12 @@ class TradingOrchestrator:
             report_path=Path("data/auditor_report.json"),
         )
         self.offer_gate = MarketOfferGate()
+        # DeepSeek per-market advisor (triggers every 100 closes per symbol)
+        self.deepseek_advisor = DeepSeekAdvisor(
+            history_path=Path("data/trade_history.jsonl"),
+            report_path=Path("data/deepseek_report.json"),
+            state_path=Path("data/deepseek_state.json"),
+        )
         # Persistent trade history file (append-only JSONL) — Recs #5, #8, #10
         self._trade_history_path = Path("data/trade_history.jsonl")
         self._trade_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1129,6 +1136,38 @@ class TradingOrchestrator:
                 )
                 self.anti_spiral.record(symbol, str(contract_type), is_win)
 
+        # DeepSeek per-market analysis (triggers every 100 closes for this symbol)
+        if symbol:
+            ds_report = self.deepseek_advisor.record_close(symbol)
+            if ds_report:
+                rec = (ds_report.get("recommendation") or {})
+                health = rec.get("health", "?")
+                wr = (ds_report.get("payload_summary") or {}).get("overall_win_rate", 0)
+                logger.info(
+                    "DeepSeek analysis complete: %s health=%s wr=%.1f%% trades=%d",
+                    symbol, health, wr, ds_report.get("trades_analyzed", 0),
+                )
+                # Send Telegram notification with DeepSeek insights
+                hints = rec.get("learning_hints") or []
+                summary = rec.get("summary", "")
+                health_emoji = {
+                    "HEALTHY": "\U0001f7e2",
+                    "WATCH": "\U0001f7e1",
+                    "STRUGGLING": "\U0001f7e0",
+                    "BAN": "\U0001f534",
+                }.get(health, "\u2139\ufe0f")
+                msg_lines = [
+                    f"\U0001f916 <b>DeepSeek Analysis: {symbol}</b>",
+                    f"{health_emoji} Health: <code>{health}</code> | WR: <code>{wr:.1f}%</code>",
+                    f"{summary}",
+                ]
+                if hints:
+                    msg_lines.append("\U0001f4a1 Hints: " + " | ".join(hints[:3]))
+                ban_setups = rec.get("ban_setups") or []
+                if ban_setups:
+                    msg_lines.append("\u26d4 Ban: " + ", ".join(ban_setups[:5]))
+                self._notify_async("\n".join(msg_lines))
+
         self.closed_trades.append(
             {"contract": contract, "meta": meta, "profit": profit}
         )
@@ -1319,6 +1358,7 @@ class TradingOrchestrator:
             "correlation": getattr(self, "_last_corr_snapshot", {}),
             "ai_auditor": self.ai_auditor.latest_report(),
             "offer_gate": self.offer_gate.snapshot(),
+            "deepseek": self.deepseek_advisor.snapshot(),
             "fx_minute_duration": preferred_minute_duration("frxEURUSD", self.minute_duration),
         }
 

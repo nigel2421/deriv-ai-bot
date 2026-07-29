@@ -116,3 +116,13 @@ MIN_MODEL_ACCURACY = _env_float("MIN_MODEL_ACCURACY", 0.12)
 MIN_MODEL_LIFT = _env_float("MIN_MODEL_LIFT", 0.0)
 FORCE_SAVE_MODEL = _env_bool("FORCE_SAVE_MODEL", False)
 TRAIN_LSTM = _env_bool("TRAIN_LSTM", False)
+
+# ── DeepSeek AI Advisor ────────────────────────────────────────────────────
+# Per-market analysis: triggers every DEEPSEEK_ANALYZE_EVERY trades on a symbol
+# Reads full GCS-backed trade_history.jsonl for maximum accuracy
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_ENABLED = _env_bool("DEEPSEEK_ENABLED", False)
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+# How many closed trades per symbol before triggering an analysis
+DEEPSEEK_ANALYZE_EVERY = _env_int("DEEPSEEK_ANALYZE_EVERY", 100)

@@ -554,11 +554,18 @@ async def root(_: Request) -> HTMLResponse:
       <p class="muted">Phase 1: display + alert only. Phase 2 auto-deflation after &gt;1000 trades, error &gt;15%, 3 consecutive audits.</p>
       {_fmt_calibration_panel(s)}
     </div>
-    <div>
-      <h2>&#129302; AI Auditor</h2>
-      <p class="muted">Persistent cumulative closes across restarts. Every 100: standard audit. Every 1000: deep audit.</p>
-      {_fmt_auditor_panel(s)}
-    </div>
+
+  <div class="card">
+    <h2>&#129302; AI Auditor</h2>
+    <p class="muted">Persistent cumulative closes across restarts. Every 100: standard audit. Every 1000: deep audit.</p>
+    {_fmt_auditor_panel(s)}
+  </div>
+</div>
+
+  <div class="card">
+    <h2>&#129504; DeepSeek AI Advisor</h2>
+    <p class="muted">Per-market deep analysis triggers every 100 closed trades per symbol. Reads full GCS trade history for accuracy.</p>
+    {_fmt_deepseek_panel(s)}
   </div>
 
   <div class="card">

@@ -16,7 +16,7 @@ param(
   [string]$Mode = "demo"
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 Set-Location (Join-Path $PSScriptRoot "..")
 
 Write-Host "Project=$ProjectId Region=$Region Service=$Service"
@@ -30,8 +30,11 @@ gcloud services enable `
   cloudbuild.googleapis.com `
   secretmanager.googleapis.com
 
-# Artifact Registry repo
-$repoExists = gcloud artifacts repositories describe $Repo --location=$Region 2>$null
+# Artifact Registry repo check
+$repoExists = $false
+$null = gcloud artifacts repositories describe $Repo --location=$Region 2>&1
+if ($LASTEXITCODE -eq 0) { $repoExists = $true }
+
 if (-not $repoExists) {
   gcloud artifacts repositories create $Repo `
     --repository-format=docker `
@@ -46,10 +49,16 @@ gcloud builds submit --tag $Image .
 
 Write-Host "Deploying Cloud Run service (min instances=1, CPU always allocated)..."
 
-# Secrets must already exist: deriv-api-token, optional telegram secrets
-# Create with:
-#   echo -n "TOKEN" | gcloud secrets create deriv-api-token --data-file=-
-#   echo -n "TOKEN" | gcloud secrets versions add deriv-api-token --data-file=-
+# Ensure GCS bucket for persistent learning state exists
+$Bucket = "$ProjectId-deriv-bot-data"
+$bucketExists = $false
+$null = gcloud storage buckets describe "gs://$Bucket" 2>&1
+if ($LASTEXITCODE -eq 0) { $bucketExists = $true }
+
+if (-not $bucketExists) {
+  Write-Host "Creating GCS bucket gs://$Bucket for persistent learning data..."
+  gcloud storage buckets create "gs://$Bucket" --location=$Region --project=$ProjectId
+}
 
 gcloud run deploy $Service `
   --image $Image `
@@ -65,8 +74,10 @@ gcloud run deploy $Service `
   --max-instances 1 `
   --cpu-boost `
   --no-cpu-throttling `
+  --add-volume "name=gcs-data,type=cloud-storage,bucket=$Bucket" `
+  --add-volume-mount "volume=gcs-data,mount-path=/app/data" `
   --env-vars-file "scripts/cloudrun-env.yaml" `
-  --set-secrets "DERIV_API_TOKEN=deriv-api-token:latest,DERIV_APP_ID=deriv-app-id:latest,TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_CHAT_ID=telegram-chat-id:latest"
+  --set-secrets "DERIV_API_TOKEN=deriv-api-token:latest,DERIV_APP_ID=deriv-app-id:latest,TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_CHAT_ID=telegram-chat-id:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest"
 
 Write-Host ""
 Write-Host "Telegram secrets (create/update from .env):"

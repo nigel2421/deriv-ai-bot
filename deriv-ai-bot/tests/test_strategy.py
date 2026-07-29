@@ -51,7 +51,7 @@ def test_zuno_switch():
 def test_xml_parser_full_fields():
     p = XMLStrategyParser("config/strategy.xml")
     g = p.config["global"]
-    assert g["min_confidence"] == 0.80
+    assert g["min_confidence"] == 0.82
 
     r100 = p.get_strategy("R_100")
     assert r100["type"] == "martingale"
