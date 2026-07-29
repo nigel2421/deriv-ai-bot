@@ -239,14 +239,14 @@ class AdaptiveLearner:
         mult = self.confidence_multiplier(symbol, contract_type)
         adj = float(confidence) * mult
         
-        # Phase 9: Confidence Caps
+        # Phase 9: Confidence Caps — conservative but must allow signals through min_confidence
         n = self.samples(symbol, contract_type)
         if n < 50:
-            cap = 0.60
+            cap = 0.88
         elif n < 100:
-            cap = 0.75
+            cap = 0.92
         elif n < 500:
-            cap = 0.90
+            cap = 0.97
         else:
             cap = 1.0
             

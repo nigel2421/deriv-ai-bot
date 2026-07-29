@@ -757,10 +757,10 @@ class TradingOrchestrator:
             bucket = _bucket_for(best.get("confidence", 0.0))
             is_healthy = self.calibration.is_healthy(bucket)
             
-            # Edge Discovery Mode (First 50 trades) bypasses PF/MPS locks to build stats
-            is_discovery = trade_count < 50
+            # Edge Discovery Mode (First 200 trades) bypasses PF/MPS locks to build stats
+            is_discovery = trade_count < 200
             
-            if not is_discovery and (mps <= 80 or pf <= 1.0 or not is_healthy):
+            if not is_discovery and (mps < 50 or pf <= 1.0 or not is_healthy):
                 logger.info(
                     "Phase 16 Ultimate Filter Blocked %s %s: mps=%.2f pf=%.2f healthy=%s (trades=%d)",
                     sym, ct, mps, pf, is_healthy, trade_count
