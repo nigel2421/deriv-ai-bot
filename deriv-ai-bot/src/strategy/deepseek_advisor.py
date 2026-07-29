@@ -56,6 +56,9 @@ Respond with a JSON object (no markdown) with these keys:
   "contract_recommendations": [
     {"contract_type": "...", "action": "KEEP|BOOST|REDUCE|BAN", "reason": "..."}
   ],
+  "duration_recommendations": [
+    {"contract_type": "...", "action": "CHANGE", "suggested_duration": 10, "unit": "t", "reason": "..."}
+  ],
   "confidence_recommendation": {"action": "RAISE|LOWER|KEEP", "suggested_threshold": 0.82, "reason": "..."},
   "learning_hints": ["hint1", "hint2"],
   "ban_setups": ["SYMBOL|CONTRACT_TYPE", ...],
@@ -424,6 +427,22 @@ class DeepSeekAdvisor:
         """How many more closes until the next analysis for this symbol."""
         current = self._counters.get(symbol, 0)
         return max(0, self.analyze_every - current)
+
+    def get_duration_override(self, symbol: str, contract_type: str) -> Optional[Dict[str, Any]]:
+        """Phase 4: Extracts active duration overrides from the latest DeepSeek report."""
+        report = self._last_reports.get(symbol)
+        if not report:
+            return None
+        recs = report.get("recommendation", {}).get("duration_recommendations", [])
+        for rec in recs:
+            if str(rec.get("contract_type")).upper() == str(contract_type).upper() and str(rec.get("action")).upper() == "CHANGE":
+                dur = int(rec.get("suggested_duration", 0))
+                if dur > 0:
+                    return {
+                        "duration": dur,
+                        "duration_unit": rec.get("unit", "t")
+                    }
+        return None
 
     def snapshot(self) -> Dict[str, Any]:
         """Return the full state for /status JSON and dashboard."""

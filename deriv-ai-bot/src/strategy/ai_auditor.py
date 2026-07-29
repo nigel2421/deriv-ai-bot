@@ -103,7 +103,7 @@ class AIAuditor:
         # Filter trades that have this feature
         valid = [
             t for t in trades
-            if t.get(feature) is not None and t.get("is_win") is not None
+            if t.get(feature) is not None and t.get("profit") is not None
         ]
         if len(valid) < MIN_SAMPLES_PER_QUARTILE * 4:
             return None
@@ -116,10 +116,11 @@ class AIAuditor:
         q1 = valid[:q1_size]
         q4 = valid[-q1_size:]
 
-        q1_wr = sum(1 for t in q1 if t.get("is_win")) / len(q1)
-        q4_wr = sum(1 for t in q4 if t.get("is_win")) / len(q4)
+        # Phase 14: Feature Contribution System (Incremental Profit)
+        q1_profit = sum(float(t.get("profit", 0)) for t in q1) / len(q1)
+        q4_profit = sum(float(t.get("profit", 0)) for t in q4) / len(q4)
 
-        return round((q4_wr - q1_wr) * 100, 2)  # as percentage points
+        return round(q4_profit - q1_profit, 3)  # absolute profit delta per trade
 
     def _generate_recommendations(
         self,
@@ -135,20 +136,20 @@ class AIAuditor:
         )
 
         for feature, contrib in sorted_contribs:
-            if contrib > 10:
+            if contrib > 0.50:
                 recs.append(
                     f"Increase '{feature}' weight in trade_selector — "
-                    f"strong positive correlation (+{contrib:.1f}%)"
+                    f"strong positive profit correlation (+${contrib:.2f}/trade)"
                 )
-            elif contrib < -10:
+            elif contrib < -0.50:
                 recs.append(
-                    f"WARNING: '{feature}' is actively hurting performance "
-                    f"({contrib:.1f}%). Consider removing."
+                    f"WARNING: '{feature}' is actively hurting profitability "
+                    f"(-${abs(contrib):.2f}/trade). Consider removing."
                 )
-            elif contrib < -5:
+            elif contrib < -0.20:
                 recs.append(
                     f"Consider reducing '{feature}' weight — "
-                    f"negative contribution ({contrib:.1f}%)"
+                    f"negative contribution (-${abs(contrib):.2f}/trade)"
                 )
 
         if overall_wr < 0.50:
@@ -197,11 +198,23 @@ class AIAuditor:
             "hurting": [{"feature": f, "contribution": f"{v:.1f}%"} for f, v in hurting],
             "neutral": [
                 f for f, v in contributions.items()
-                if v is None or abs(v) < 1.0
+                if v is None or abs(v) < 0.20
             ],
             "recommendations": recs,
             "raw_contributions": {k: v for k, v in contributions.items() if v is not None},
         }
+
+        # Phase 15: A/B Testing summary (if any test_tags exist)
+        test_tags = {}
+        for t in trades:
+            tag = t.get("test_tag")
+            if tag:
+                if tag not in test_tags:
+                    test_tags[tag] = {"profit": 0.0, "trades": 0}
+                test_tags[tag]["profit"] += float(t.get("profit", 0.0))
+                test_tags[tag]["trades"] += 1
+        if test_tags:
+            report["ab_tests"] = test_tags
 
         self._save_report(report)
         return report

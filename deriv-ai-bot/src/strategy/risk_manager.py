@@ -311,6 +311,26 @@ class RiskManager:
             return 0.0
         return round(adjusted, 2)
 
+    def calculate_dynamic_stake(
+        self,
+        base_stake: float,
+        mps: float,
+        pf: float,
+        ev: float,
+        trade_quality: float,
+        calibration_healthy: bool,
+    ) -> float:
+        """
+        Phase 10: Position Sizing Engine.
+        Scales stake by 1x, 2x, or 3x based on Elite conditions.
+        """
+        if mps > 85.0 and pf > 1.5 and ev > 0.0 and calibration_healthy:
+            if trade_quality >= 90.0:
+                return base_stake * 3.0
+            elif trade_quality >= 80.0:
+                return base_stake * 2.0
+        return base_stake
+
     def record_trade_result(self, profit: float) -> None:
         self._maybe_reset_daily()
         try:

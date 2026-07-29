@@ -36,10 +36,11 @@ from src.strategy.contract_types import is_digit_contract, is_rise_fall, normali
 from src.strategy.ev_engine import ev_rank, compute_ev, DEFAULT_PAYOUT_RATE
 from src.strategy.mor_tracker import MORTracker, normalize_score
 from src.strategy.transition_matrix import TransitionMatrix
-from src.strategy.calibration_tracker import CalibrationTracker
+from src.strategy.calibration_tracker import CalibrationTracker, _bucket_for
 from src.strategy.correlation_filter import CorrelationFilter
 from src.strategy.ai_auditor import AIAuditor
 from src.strategy.deepseek_advisor import DeepSeekAdvisor
+from src.strategy.profit_tracker import ProfitTracker
 from src.strategy.market_offer_gate import MarketOfferGate
 from src.strategy.session_hours import (
     is_fx_symbol,
@@ -125,6 +126,7 @@ class TradingOrchestrator:
             report_path=Path("data/deepseek_report.json"),
             state_path=Path("data/deepseek_state.json"),
         )
+        self.profit_tracker = ProfitTracker()
         # Persistent trade history file (append-only JSONL) — Recs #5, #8, #10
         self._trade_history_path = Path("data/trade_history.jsonl")
         self._trade_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -325,7 +327,11 @@ class TradingOrchestrator:
                 g_l,
             )
 
-        for symbol in self.active_symbols:
+        # Phase 4: Market Capital Allocation
+        # Rank active symbols by MPS, and only evaluate the top 5 markets
+        eval_symbols = self.profit_tracker.top_n_markets(self.active_symbols, n=5)
+
+        for symbol in eval_symbols:
             # Soft session gate (FX weekend etc.)
             open_ok, session_reason = is_likely_session_open(symbol)
             if not open_ok:
@@ -495,6 +501,10 @@ class TradingOrchestrator:
                                 intent["historical_support"] = self.learner.historical_support(
                                     symbol, intent["contract_type"]
                                 )
+                                override = self.deepseek_advisor.get_duration_override(symbol, signal_type)
+                                if override:
+                                    intent["duration"] = override["duration"]
+                                    intent["duration_unit"] = override["duration_unit"]
                                 candidates.append(intent)
             elif skip_d:
                 logger.debug("Skip digits %s: %s", symbol, dig_reason)
@@ -571,6 +581,11 @@ class TradingOrchestrator:
                                 intent["historical_support"] = self.learner.historical_support(
                                     symbol, intent["contract_type"]
                                 )
+                                override = self.deepseek_advisor.get_duration_override(symbol, rf_type)
+                                if override:
+                                    intent["duration"] = override["duration"]
+                                    intent["duration_unit"] = override["duration_unit"]
+                                    intent["horizon"] = "minute" if override["duration_unit"] == "m" else "tick"
                                 candidates.append(intent)
                     else:
                         logger.debug(
@@ -670,6 +685,7 @@ class TradingOrchestrator:
                 )
                 mor_score = self.mor_tracker.update_score(intent["symbol"], raw_score)
                 intent["mor_score"] = mor_score
+                intent["mps"] = self.profit_tracker.get_mps(intent["symbol"], intent["contract_type"])
 
                 # Flat stake mode: never martingale-double (stops loss pits)
                 if self.stake_mode == "flat":
@@ -732,9 +748,26 @@ class TradingOrchestrator:
 
         best = self.selector.select_best_trade(signals)
         if best:
-            self.anti_spiral.note_selected(
-                str(best["symbol"]), str(best["contract_type"])
-            )
+            # Phase 16: Ultimate Execution Filter
+            sym = best["symbol"]
+            ct = best["contract_type"]
+            mps = best.get("mps", 0.0)
+            pf = self.profit_tracker.get_profit_factor(sym, ct)
+            trade_count = self.profit_tracker.get_trade_count(sym, ct)
+            bucket = _bucket_for(best.get("confidence", 0.0))
+            is_healthy = self.calibration.is_healthy(bucket)
+            
+            # Edge Discovery Mode (First 50 trades) bypasses PF/MPS locks to build stats
+            is_discovery = trade_count < 50
+            
+            if not is_discovery and (mps <= 80 or pf <= 1.0 or not is_healthy):
+                logger.info(
+                    "Phase 16 Ultimate Filter Blocked %s %s: mps=%.2f pf=%.2f healthy=%s (trades=%d)",
+                    sym, ct, mps, pf, is_healthy, trade_count
+                )
+                return None
+
+            self.anti_spiral.note_selected(str(sym), str(ct))
         return best
 
     async def execute_trade_cycle(self) -> Optional[Dict[str, Any]]:
@@ -786,7 +819,28 @@ class TradingOrchestrator:
             return None
 
         # Prefer strategy-computed stake; fall back to base
-        raw_stake = float(best.get("stake", best.get("base_stake", MIN_STAKE)))
+        base_stake = float(best.get("base_stake", MIN_STAKE))
+        raw_stake = float(best.get("stake", base_stake))
+        
+        # Phase 10: Position Sizing Engine
+        sym = best["symbol"]
+        ct = best["contract_type"]
+        mps = best.get("mps", 0.0)
+        pf = self.profit_tracker.get_profit_factor(sym, ct)
+        ev = best.get("ev", 0.0)
+        conf = best.get("confidence", 0.0)
+        trade_quality = best.get("trade_quality", ev * conf * 100)
+        bucket = _bucket_for(conf)
+        
+        raw_stake = self.risk_manager.calculate_dynamic_stake(
+            base_stake=raw_stake,
+            mps=mps,
+            pf=pf,
+            ev=ev,
+            trade_quality=trade_quality,
+            calibration_healthy=self.calibration.is_healthy(bucket)
+        )
+
         assert balance is not None
         stake = self.risk_manager.clamp_stake(raw_stake, balance)
         if stake <= 0:
@@ -1250,6 +1304,13 @@ class TradingOrchestrator:
                 (meta.get("regime") or {}).get("chop_score") or 0
             ),
             "status": status.lower(),
+            # Phase 5: Setup Economics 
+            "duration": meta.get("duration"),
+            "duration_unit": meta.get("duration_unit"),
+            "mps": float(meta.get("mps") or 0),
+            "trade_quality": float(meta.get("trade_quality") or 0),
+            "pf": float(self.profit_tracker.get_profit_factor(symbol, contract_type) if symbol and contract_type else 0.0),
+            "test_tag": "profit_engine_v1",
         })
 
         # ---- Rec #10: AI Auditor (persistent cumulative closes) ----

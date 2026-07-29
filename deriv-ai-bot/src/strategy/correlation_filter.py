@@ -61,7 +61,7 @@ class CorrelationFilter:
 
         Requires that each candidate dict has:
             "symbol": str
-            "ev": float  (added by ev_engine.ev_rank before this call)
+            "mps": float
 
         Returns filtered list.
         """
@@ -81,23 +81,23 @@ class CorrelationFilter:
                 uncorrelated.append(cand)
                 continue
 
-            ev = float(cand.get("ev") or 0.0)
+            mps = float(cand.get("mps") or 0.0)
             existing = group_best.get(group)
 
             if existing is None:
                 group_best[group] = cand
-            elif ev > float(existing.get("ev") or 0.0):
+            elif mps > float(existing.get("mps") or 0.0):
                 # New candidate beats the current best — block the old one
                 blocked_log.append(
                     f"{existing.get('symbol')} {existing.get('contract_type')} "
-                    f"ev={existing.get('ev', 0):.4f} (replaced by {symbol})"
+                    f"mps={existing.get('mps', 0):.4f} (replaced by {symbol})"
                 )
                 group_best[group] = cand
             else:
                 # Current candidate is worse — block it
                 blocked_log.append(
                     f"{symbol} {cand.get('contract_type')} "
-                    f"ev={ev:.4f} (blocked by {existing.get('symbol')} ev={existing.get('ev', 0):.4f})"
+                    f"mps={mps:.4f} (blocked by {existing.get('symbol')} mps={existing.get('mps', 0):.4f})"
                 )
 
         if blocked_log:
@@ -136,7 +136,7 @@ class CorrelationFilter:
             rows.append({
                 "group": group_name,
                 "signals": total_signals,
-                "selected": f"{selected.get('symbol')} EV={selected.get('ev', 0):.4f}" if selected else "—",
+                "selected": f"{selected.get('symbol')} MPS={selected.get('mps', 0):.4f}" if selected else "—",
                 "blocked": [f"{c.get('symbol')} ({c.get('contract_type')})" for c in group_blocked],
             })
 

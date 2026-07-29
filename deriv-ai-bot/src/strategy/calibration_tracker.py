@@ -165,6 +165,15 @@ class CalibrationTracker:
             return None
         return round(weighted_err / total_n, 4)
 
+    def is_healthy(self, bucket: str) -> bool:
+        """
+        Phase 8/10/16: Returns False if calibration error >= 15% (SEVERELY OVERCONFIDENT).
+        """
+        err = self.calibration_error(bucket)
+        if err is None:
+            return True # allow if insufficient data
+        return err < PHASE2_ERROR_THRESHOLD
+
     def status_for(self, bucket: str) -> Tuple[str, str]:
         """
         Phase 1 display labels (no probability mutation).

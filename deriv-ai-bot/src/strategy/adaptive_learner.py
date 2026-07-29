@@ -125,17 +125,21 @@ class AdaptiveLearner:
                 "conf_n": 0,
                 "family": family or "",
                 "strength_history": [],
+                "profit_wins": 0.0,
+                "profit_losses": 0.0,
             },
         )
         if is_win:
             s["wins"] = int(s["wins"]) + 1
             s["streak_win"] = int(s["streak_win"]) + 1
             s["streak_loss"] = 0
+            s["profit_wins"] = float(s.get("profit_wins", 0.0)) + abs(profit)
             self.global_wins += 1
         else:
             s["losses"] = int(s["losses"]) + 1
             s["streak_loss"] = int(s["streak_loss"]) + 1
             s["streak_win"] = 0
+            s["profit_losses"] = float(s.get("profit_losses", 0.0)) + abs(profit)
             self.global_losses += 1
         s["pnl"] = float(s["pnl"]) + float(profit)
         s["last_ts"] = time.time()
@@ -162,7 +166,13 @@ class AdaptiveLearner:
         return int(s.get("wins", 0)) + int(s.get("losses", 0))
 
     def win_rate(self, symbol: str, contract_type: str) -> float:
+        """Phase 6: Profit-Weighted Learning"""
         s = self.stats.get(_key(symbol, contract_type)) or {}
+        pw = float(s.get("profit_wins", 0.0))
+        pl = float(s.get("profit_losses", 0.0))
+        if pw + pl > 0:
+            return pw / (pw + pl)
+            
         w, l = int(s.get("wins", 0)), int(s.get("losses", 0))
         if w + l == 0:
             return 0.5  # neutral prior
@@ -228,7 +238,19 @@ class AdaptiveLearner:
             return 0.0
         mult = self.confidence_multiplier(symbol, contract_type)
         adj = float(confidence) * mult
-        return float(max(0.0, min(0.99, adj)))
+        
+        # Phase 9: Confidence Caps
+        n = self.samples(symbol, contract_type)
+        if n < 50:
+            cap = 0.60
+        elif n < 100:
+            cap = 0.75
+        elif n < 500:
+            cap = 0.90
+        else:
+            cap = 1.0
+            
+        return float(max(0.0, min(cap, adj)))
 
     def selection_bonus(self, symbol: str, contract_type: str) -> float:
         """Small additive score for trade selector (0..0.08)."""

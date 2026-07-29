@@ -20,7 +20,7 @@ Changes from original:
   - Added velocity_bonus from MORTracker
   - family_bias retained (0.01 for rise_fall)
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
@@ -37,38 +37,21 @@ class TradeSelector:
         if not signals:
             return None
 
-        def score(s: Dict[str, Any]) -> float:
-            # Primary: EV (expected value per unit stake)
-            if "ev" in s and s["ev"] is not None:
-                ev = float(s["ev"])
-            else:
-                from src.strategy.ev_engine import compute_ev
-                ev = compute_ev(float(s.get("confidence") or 0.0))
-
-            # HPP quality bonus (Rec #2 — already exists, now properly weighted)
-            learn_bonus = float(s.get("learn_bonus") or 0.0)
-
-            # Momentum signal strength
-            strength = float(s.get("trend_strength") or 0.0)
-
-            # Rise/Fall persistence bonus from TransitionMatrix (Rec #3)
-            # Range: [-0.10, +0.10], 0.0 for digit contracts
-            persistence_adj = float(s.get("persistence_adjustment") or 0.0)
-
-            # MOR velocity bonus (Rec #4): rapidly improving markets get +0.03
-            vel_bonus = float(s.get("velocity_bonus") or 0.0)
-
-            # Slight edge to rise/fall when everything else is equal
-            family_bias = 0.01 if s.get("family") in ("rise_fall", "minute_rise_fall") else 0.0
-
-            return (
-                ev
-                + 0.08 * learn_bonus
-                + 0.04 * strength
-                + persistence_adj
-                + vel_bonus
-                + family_bias
-            )
+        def score(s: Dict[str, Any]) -> Tuple[bool, float, float]:
+            """
+            Phase 7: Opportunity Cost Engine.
+            Ranking priority: 1. Positive EV, 2. Highest MPS, 3. Highest Trade Quality
+            """
+            ev = float(s.get("ev", 0.0))
+            is_positive_ev = ev > 0.0
+            
+            mps = float(s.get("mps", 0.0))
+            
+            # Trade Quality = EV * Confidence (proxy, or use passed in quality)
+            conf = float(s.get("confidence", 0.0))
+            trade_quality = float(s.get("trade_quality", ev * conf * 100))
+            
+            return (is_positive_ev, mps, trade_quality)
 
         best = max(signals, key=score)
         logger.info(
@@ -80,8 +63,7 @@ class TradeSelector:
             best.get("confidence"),
             best.get("ev", 0.0),
             best.get("ev_label", "?"),
-            best.get("family"),
-            best.get("persistence_adjustment", 0.0),
-            best.get("velocity_bonus", 0.0),
+            best.get("mps", 0.0),
+            best.get("trade_quality", 0.0),
         )
         return best
