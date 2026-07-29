@@ -554,13 +554,12 @@ async def root(_: Request) -> HTMLResponse:
       <p class="muted">Phase 1: display + alert only. Phase 2 auto-deflation after &gt;1000 trades, error &gt;15%, 3 consecutive audits.</p>
       {_fmt_calibration_panel(s)}
     </div>
-
-  <div class="card">
-    <h2>&#129302; AI Auditor</h2>
-    <p class="muted">Persistent cumulative closes across restarts. Every 100: standard audit. Every 1000: deep audit.</p>
-    {_fmt_auditor_panel(s)}
+    <div>
+      <h2>&#129302; AI Auditor</h2>
+      <p class="muted">Persistent cumulative closes across restarts. Every 100: standard audit. Every 1000: deep audit.</p>
+      {_fmt_auditor_panel(s)}
+    </div>
   </div>
-</div>
 
   <div class="card">
     <h2>&#129504; DeepSeek AI Advisor</h2>
@@ -594,6 +593,88 @@ async def root(_: Request) -> HTMLResponse:
 </body>
 </html>"""
     return HTMLResponse(html)
+
+
+def _fmt_deepseek_panel(s: dict) -> str:
+    """DeepSeek per-market AI advisor panel."""
+    ds = s.get("deepseek") or {}
+    if not ds.get("enabled"):
+        return "<p class='muted'>DeepSeek disabled. Set <code>DEEPSEEK_ENABLED=true</code> and <code>DEEPSEEK_API_KEY</code> in Cloud Run secrets.</p>"
+
+    sym_status = ds.get("symbol_status") or {}
+    latest = ds.get("latest_report")
+    model = ds.get("model", "?")
+    every = ds.get("analyze_every", 100)
+
+    sym_rows = []
+    for sym, info in sorted(sym_status.items()):
+        until = info.get("closes_until_next", every)
+        done = every - until
+        pct = min(100, int(done / max(every, 1) * 100))
+        health = info.get("health") or ""
+        health_cls = {"HEALTHY": "ok", "WATCH": "warn", "STRUGGLING": "warn", "BAN": "bad"}.get(health, "muted")
+        health_s = f"<span class='{health_cls}'>{health}</span>" if health else "<span class='muted'>pending</span>"
+        last = (info.get("last_analysis") or "")[:16].replace("T", " ")
+        sym_rows.append(
+            f"<tr><td><code>{sym}</code></td>"
+            f"<td style='min-width:120px'>"
+            f"<div style='background:#0b1220;border-radius:4px;height:8px;overflow:hidden'>"
+            f"<div style='background:#7eb6ff;width:{pct}%;height:100%'></div></div>"
+            f"<span class='muted' style='font-size:0.72rem'>{done}/{every}</span></td>"
+            f"<td>{health_s}</td>"
+            f"<td class='muted' style='font-size:0.8rem'>{last or '—'}</td></tr>"
+        )
+
+    table_html = ""
+    if sym_rows:
+        table_html = (
+            "<table><thead><tr><th>Symbol</th><th>Progress to next</th>"
+            "<th>Health</th><th>Last run</th></tr></thead>"
+            f"<tbody>{''.join(sym_rows)}</tbody></table>"
+        )
+
+    rec_html = ""
+    if latest:
+        rec = latest.get("recommendation") or {}
+        sym_name = latest.get("symbol", "?")
+        gen = str(latest.get("generated_at", ""))[:19].replace("T", " ")
+        n = latest.get("trades_analyzed", 0)
+        health = rec.get("health", "?")
+        health_cls = {"HEALTHY": "ok", "WATCH": "warn", "STRUGGLING": "warn", "BAN": "bad"}.get(health, "muted")
+        summary = rec.get("summary", "")
+        hints = rec.get("learning_hints") or []
+        bans = rec.get("ban_setups") or []
+        boosts = rec.get("boost_setups") or []
+        conf_rec = rec.get("confidence_recommendation") or {}
+        ct_recs = rec.get("contract_recommendations") or []
+
+        ct_rows = "".join(
+            f"<tr><td><code>{r.get('contract_type')}</code></td>"
+            f"<td><span class='{'ok' if r.get('action') in ('KEEP','BOOST') else 'bad'}'>{r.get('action')}</span></td>"
+            f"<td class='muted' style='font-size:0.82rem'>{r.get('reason','')[:80]}</td></tr>"
+            for r in ct_recs[:8]
+        )
+
+        rec_html = f"""
+        <hr style='border-color:#243049;margin:1rem 0'/>
+        <p style='margin:0 0 0.5rem'><b>Latest: {sym_name}</b> &middot;
+        <span class='{health_cls}'>{health}</span> &middot;
+        {n} trades &middot; <span class='muted'>{gen}</span></p>
+        <p class='muted' style='font-size:0.9rem'>{summary}</p>
+        {'<table><thead><tr><th>Contract</th><th>Action</th><th>Reason</th></tr></thead><tbody>' + ct_rows + '</tbody></table>' if ct_rows else ''}
+        <div class='grid3' style='margin-top:0.75rem'>
+          <div><b class='ok'>&#128161; Hints</b><ul>{''.join(f'<li class=muted style=font-size:0.85rem>{h}</li>' for h in hints[:5]) or '<li class=muted>none</li>'}</ul></div>
+          <div><b class='bad'>&#9940; Bans</b><ul>{''.join(f'<li class=bad style=font-size:0.85rem><code>{b}</code></li>' for b in bans[:6]) or '<li class=muted>none</li>'}</ul></div>
+          <div><b class='ok'>&#128640; Boosts</b><ul>{''.join(f'<li class=ok style=font-size:0.85rem><code>{b}</code></li>' for b in boosts[:6]) or '<li class=muted>none</li>'}</ul></div>
+        </div>
+        {'<p class=muted style=font-size:0.85rem>Confidence: ' + conf_rec.get('action','') + ' → ' + str(conf_rec.get('suggested_threshold','')) + ' — ' + conf_rec.get('reason','')[:100] + '</p>' if conf_rec else ''}
+        """
+
+    return (
+        f"<p class='muted' style='margin:0 0 0.75rem'>Model: <code>{model}</code> · Trigger: every <code>{every}</code> closes per symbol · Analyzed: <code>{ds.get('total_symbols_analyzed', 0)}</code> markets</p>"
+        + table_html
+        + rec_html
+    )
 
 
 def _fmt_probability_panel(s: dict) -> str:

@@ -1,173 +1,230 @@
 # Deriv AI Trading Bot
 
-Automated **Deriv.com** digits trading bot (Over/Under/Even/Odd) with hybrid **XGBoost (+ optional LSTM)** signals, Martingale/Zuno strategies, risk controls, Telegram ops, backtesting, and Docker deploy.
+An enterprise-grade, autonomous multi-market trading system for **Deriv.com** supporting **20 synthetic & FX markets**, real-time **Expected Value (EV)** ranking, continuous adaptive learning, persistent GCS storage, and automated **DeepSeek AI per-market analysis**.
 
-**WARNING:** Trading bots can lose money quickly. Start in **demo** mode. Paper-trade and backtest before any real account use.
+Built with Python, FastAPI/Starlette, WebSockets, XGBoost, TensorFlow, and integrated with Google Cloud Run and GCP Secret Manager.
 
----
-
-## Features
-
-| Area | Capability |
-|------|------------|
-| **API** | WebSocket client, `req_id` RPC, ticks, history, proposal→buy→monitor |
-| **AI** | Feature schema, train/evaluate gates, live inference + heuristic fallback |
-| **Strategy** | XML config, Martingale stakes, Zuno type switching |
-| **Risk** | Live balance, daily loss %, consecutive losses, max open, stake caps |
-| **Ops** | Telegram `/status` `/pause` `/resume` `/stats`, structured logs |
-| **Research** | Data collector, tick backtest, Monte Carlo path analysis |
-| **Deploy** | Docker Compose, optional Streamlit dashboard |
+> [!WARNING]
+> Trading financial and synthetic instruments involves significant risk of capital loss. Always start in **demo** mode (`MODE=demo`) and thoroughly validate strategy performance before deploying real capital.
 
 ---
 
-## Quick start
+## Key Capabilities
+
+| Component | Architecture & Features |
+| --- | --- |
+| **Asset Pool (20 Markets)** | Volatility Indices (`R_10`–`R_100`, `1HZ10V`–`1HZ100V`), Major FX (`frxEURUSD`, `frxGBPUSD`), Spike Indices (`BOOM1000`, `BOOM500`, `CRASH1000`, `CRASH500`), Jump Indices (`JD10`, `JD25`, `JD50`), Step Index (`STPIDX`). |
+| **DeepSeek AI Advisor** | Performs automated LLM-powered strategic audits every 100 closed trades per symbol, querying DeepSeek Chat API with complete GCS historical data to generate setup bans/boosts, confidence adjustments, and Telegram alerts. |
+| **Persistent Learning (GCS)** | Google Cloud Storage volume mounted directly at `/app/data` on Cloud Run. Win rates, calibration error, MOR rankings, and trade history survive container restarts permanently. |
+| **Signal & Strategy Engine** | 11 analytical engines (Entropy, Hurst HPP Foundation & Velocity, Pattern Strength & Clarity, Momentum, Persistence, Regime Filter, EV Engine, Transition Matrix, MOR Tracker). |
+| **Multi-Trade Concurrency** | Executes up to 3 concurrent trades (`MAX_OPEN_TRADES=3`) across uncorrelated assets with dynamic stake clamping (`MAX_STAKE_PCT=0.4%`) to preserve capital. |
+| **Cloud Run Native** | Single-instance, non-throttled continuous container (`min-instances=1`, `no-cpu-throttling`, `cpu-boost`, 2 vCPU / 2Gi RAM) with automated PowerShell and Bash deployment pipelines. |
+| **Live Control & Ops** | Modern web dashboard (`/`), JSON status API (`/status`), health check endpoints (`/health`, `/ready`), and Telegram bot commands (`/status`, `/pause`, `/resume`, `/stats`). |
+
+---
+
+## Supported Markets & Strategy Suite
+
+| Market Family | Symbols | Default Duration | Allowed Contract Types | Strategy Notes |
+| --- | --- | --- | --- | --- |
+| **Classic Synthetics** | `R_10`, `R_25`, `R_50`, `R_75`, `R_100` | 5 ticks | `DIGITOVER`, `DIGITUNDER`, `DIGITEVEN`, `DIGITODD`, `CALL`, `PUT` | Adaptive digit barriers + trend momentum |
+| **1-Second (1Hz)** | `1HZ10V`, `1HZ25V`, `1HZ50V`, `1HZ75V`, `1HZ100V` | 5 ticks | `DIGITOVER`, `DIGITUNDER`, `DIGITEVEN`, `DIGITODD`, `CALL`, `PUT` | High-frequency tick scans |
+| **Major FX** | `frxEURUSD`, `frxGBPUSD` | 30 minutes | `CALL`, `PUT` | Session-gated (London/NY hours) |
+| **Boom Indices** | `BOOM1000`, `BOOM500` | 10–15 ticks | `CALL` only | Captures upward spikes |
+| **Crash Indices** | `CRASH1000`, `CRASH500` | 10–15 ticks | `PUT` only | Captures downward crashes |
+| **Jump Indices** | `JD10`, `JD25`, `JD50` | 5 ticks | `DIGITOVER`, `DIGITUNDER`, `DIGITEVEN`, `DIGITODD`, `CALL`, `PUT` | Handles high volatility jumps |
+| **Step Index** | `STPIDX` | 5 ticks | `DIGITOVER`, `DIGITUNDER`, `DIGITEVEN`, `DIGITODD` | Fixed 0.1 pip steps; low-entropy pattern |
+
+---
+
+## Quick Start (Local Setup)
+
+### 1. Prerequisites
+
+- Python 3.10+
+- Deriv API Token (Demo token from [Deriv API Token Settings](https://app.deriv.com/account/api-token))
+- Deriv App ID (Default `33R2Z6MTElnIWrId8aH3m` or your own from developers.deriv.com)
+
+### 2. Installation
 
 ```bash
-# 1. Environment
+# Clone repository
+git clone https://github.com/nigel2421/deriv-ai-bot.git
+cd deriv-ai-bot
+
+# Create and activate virtual environment
 python -m venv venv
-# Windows: venv\Scripts\activate
+# On Windows PowerShell:
+.\venv\Scripts\Activate.ps1
+# On Linux/macOS:
 source venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
+```
 
-# 2. Config
+### 3. Environment Configuration
+
+Copy `.env.example` to `.env` and populate your credentials:
+
+```bash
 cp .env.example .env
-# Set DERIV_API_TOKEN (demo). Optional: TELEGRAM_*, risk knobs.
+```
 
-# 3. Train model (offline OK — creates sample data if needed)
-python scripts/train_model.py
+Key environment variables:
 
-# 4. Connection smoke test
+| Variable | Default / Example | Purpose |
+| --- | --- | --- |
+| `DERIV_APP_ID` | `33R2Z6MTElnIWrId8aH3m` | Deriv App ID |
+| `DERIV_API_TOKEN` | `your_api_token_here` | Deriv API PAT or Bearer token |
+| `MODE` | `demo` | Trading mode (`demo` or `real`) |
+| `EXECUTE_TRADES` | `true` | `true` to execute live buys; `false` for paper proposals |
+| `MAX_OPEN_TRADES` | `3` | Maximum simultaneous open positions |
+| `MAX_STAKE_PCT` | `0.4` | Max stake as % of account balance |
+| `TRADE_CYCLE_SECONDS` | `45` | Scan cycle frequency |
+| `DEEPSEEK_ENABLED` | `true` | Enable DeepSeek LLM advisor |
+| `DEEPSEEK_API_KEY` | `sk-...` | DeepSeek API Key |
+| `DEEPSEEK_ANALYZE_EVERY` | `100` | Trades per market before triggering DeepSeek audit |
+| `TELEGRAM_BOT_TOKEN` | `optional` | Telegram bot token for mobile notifications |
+| `TELEGRAM_CHAT_ID` | `optional` | Telegram chat ID |
+
+### 4. Run Locally
+
+```bash
+# Run connection smoke test
 python scripts/test_connection.py
 
-# 5. Collect live ticks + bootstrap
-python scripts/data_collector.py --count 500
-
-# 6. Backtest
-python scripts/backtest.py --data data/historical/ticks.csv --symbol R_100 --no-model
-
-# 7. Run bot (demo)
-python src/main.py --mode demo
-```
-
-### Docker (local)
-
-```bash
-cp .env.example .env   # set secrets
-docker compose up --build -d bot
-# → http://localhost:8080  (status page)  /health  /status
-docker compose logs -f bot
-
-# Optional Streamlit dashboard (profile)
-docker compose --profile dashboard up --build -d dashboard
-# → http://localhost:8501
-```
-
-### Google Cloud Run
-
-See full guide: **[docs/CLOUD_RUN.md](docs/CLOUD_RUN.md)**
-
-You need: GCP project, `gcloud` CLI, Secret Manager secrets for `DERIV_API_TOKEN` / `DERIV_APP_ID`, and **min instances = 1** (always-on).
-
-```powershell
-# After secrets exist:
-.\scripts\deploy_cloud_run.ps1 -ProjectId YOUR_GCP_PROJECT -Region us-central1
-```
-
-Then open the service URL → `/` for live status, `/status` for JSON.
-
-Or: `bash scripts/deploy.sh`
-
----
-
-## Project layout
-
-```text
-config/           settings + strategy.xml
-src/
-  main.py         entrypoint
-  orchestrator.py trade loop
-  api/            Deriv WS, executor, monitor
-  ai/             train / predict / schema / metrics
-  strategy/       martingale, zuno, signals, risk
-  backtest/       offline engine
-  dashboard/      Streamlit UI
-  models/         trained artifacts (gitignored weights)
-scripts/          train, collect, backtest, smoke tests
-tests/            unit + integration
-data/             logs, historical ticks, training exports
-Dockerfile
-docker-compose.yml
-```
-
----
-
-## Configuration
-
-Copy `.env.example` → `.env`. Important keys:
-
-| Variable | Purpose |
-|----------|---------|
-| `DERIV_APP_ID` | App id (default `1089` if placeholder) |
-| `DERIV_API_TOKEN` | **Required** demo/real token |
-| `MODE` | `demo` / `real` |
-| `SYMBOLS` | e.g. `R_100,R_75` |
-| `EXECUTE_TRADES` | `false` = proposal only |
-| `MIN_BALANCE` / `MAX_OPEN_TRADES` / `MAX_STAKE_PCT` | Risk |
-| `TICK_HISTORY_COUNT` | Warmup ticks on connect |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Alerts + remote pause |
-| `MIN_MODEL_ACCURACY` | Train save gate |
-
-Strategy per market: `config/strategy.xml`.
-
----
-
-## Common commands
-
-```bash
-# Tests
+# Run unit tests
 pytest
 
-# Train / evaluate models
-python scripts/train_model.py
-python scripts/train_model.py --lstm
-python scripts/evaluate_model.py
-
-# Live smokes
-python scripts/test_connection.py
-python scripts/test_tick_history.py --count 100
-python scripts/test_trade_loop.py --execute false
-python scripts/test_risk_balance.py
-
-# Data + research
-python scripts/data_collector.py --symbols R_100,R_75 --count 1000
-python scripts/backtest.py --export data/training/backtest_trades.csv
-python scripts/monte_carlo_backtest.py --trades data/training/backtest_trades.csv
-
-# Dashboard (local)
-streamlit run src/dashboard/app.py
+# Start local trading orchestrator (HTTP dashboard at http://localhost:8080)
+uvicorn src.cloud_app:app --host 0.0.0.0 --port 8080
 ```
 
 ---
 
-## Safety checklist
+## Google Cloud Run Deployment Guide
 
-1. Use a **demo** token first (`MODE=demo`).
-2. Keep `EXECUTE_TRADES=false` until proposal path looks correct in logs.
-3. Fund demo only after risk gates and backtests look sane.
-4. For `real`, set `EXECUTE_TRADES=true` explicitly and start with tiny stakes.
-5. Prefer Telegram `/pause` when away from the machine.
+### Architecture Overview
+
+```text
+               +-------------------------------------------------+
+               |             Google Cloud Run                    |
+               |                                                 |
+               |   +-----------------+     +-----------------+   |
+ Deriv WS <====>   | Trading Loop    |     | Web Server      |   | <== Browser / Health
+  (API v2)     |   | (Orchestrator)  | <==>| (Starlette/Uvi) |   |
+               |   +--------+--------+     +--------+--------+   |
+               |            |                       |            |
+               +------------|-----------------------|------------+
+                            |                       |
+               +------------v-----------------------v------------+
+               |  GCS Persistent Volume Mount (/app/data)        |
+               |  gs://<project-id>-deriv-bot-data               |
+               +-------------------------------------------------+
+```
+
+### Step-by-Step Replication for GCP Deployment
+
+#### Step 1: Install GCP CLI & Authenticate
+
+```powershell
+gcloud auth login
+gcloud config set project YOUR_GCP_PROJECT_ID
+```
+
+#### Step 2: Create Secrets in Secret Manager
+
+Store sensitive keys safely in GCP Secret Manager:
+
+```powershell
+# Create secrets
+echo "YOUR_DERIV_TOKEN"    | gcloud secrets create deriv-api-token --data-file=-
+echo "YOUR_DERIV_APP_ID"   | gcloud secrets create deriv-app-id --data-file=-
+echo "YOUR_TELEGRAM_TOKEN" | gcloud secrets create telegram-bot-token --data-file=-
+echo "YOUR_TELEGRAM_CHAT"  | gcloud secrets create telegram-chat-id --data-file=-
+echo "YOUR_DEEPSEEK_KEY"   | gcloud secrets create deepseek-api-key --data-file=-
+```
+
+#### Step 3: Run Automated Deployment Script
+
+Execute the provided automated deployment script. It will enable required GCP APIs, create the Artifact Registry repository, provision the GCS persistent volume bucket, submit the container build, and deploy to Cloud Run with mounted storage.
+
+**On Windows (PowerShell):**
+
+```powershell
+.\scripts\deploy_cloud_run.ps1 -ProjectId YOUR_GCP_PROJECT_ID -Region us-central1
+```
+
+**On Linux / macOS (Bash):**
+
+```bash
+chmod +x scripts/deploy_cloud_run.sh
+./scripts/deploy_cloud_run.sh YOUR_GCP_PROJECT_ID us-central1
+```
 
 ---
 
-## Logs & artifacts
+## Monitoring & Operations
 
-- Runtime: `data/logs/bot.log`
-- Models: `src/models/` (`xgboost_model.pkl`, `feature_schema.json`, `model_meta.json`)
-- Ticks: `data/historical/`
-- Backtests: `data/training/`
+### Endpoints
+
+Once deployed, access your Cloud Run URL:
+
+- **Web Dashboard**: `https://<your-cloud-run-url>/` — Live balance, active trades, probability panel, MOR rankings, transition matrix, calibration stats, DeepSeek progress, and controls.
+- **Status API**: `https://<your-cloud-run-url>/status` — Detailed JSON telemetry for monitoring.
+- **Health Check**: `https://<your-cloud-run-url>/health` — Returns `ok` when container is healthy.
+- **Ready Probe**: `https://<your-cloud-run-url>/ready` — Returns 200 when trading loop is actively running.
+
+### Telegram Controls
+
+If Telegram tokens are configured, control your bot remotely via chat:
+
+- `/status` — View current balance, open trades, daily PnL, and win rates.
+- `/pause` — Pause trading activity safely.
+- `/resume` — Resume trading and clear loss streak cooldowns.
+- `/stats` — View cumulative learning statistics.
 
 ---
 
-## License / disclaimer
+## Project Structure
 
-Educational / research software. **You** are responsible for compliance with Deriv terms and for all financial outcomes. No warranty.
+```text
+config/
+  settings.py             Global environment variables & defaults
+  strategy.xml            XML-based strategy definition per market
+src/
+  cloud_app.py            Starlette Web App entrypoint (Dashboard, REST API, OAuth)
+  orchestrator.py         Core trade loop coordinator & multi-market scanner
+  api/                    Deriv WebSocket client, execution pipeline, trade monitor
+  ai/                     XGBoost/LSTM predictor, schema, feature engineering
+  strategy/
+    deepseek_advisor.py   DeepSeek LLM per-market analysis engine
+    ai_auditor.py         Feature quartile attribution & audit reporter
+    ev_engine.py          Expected Value calculation & candidate ranking
+    mor_tracker.py        Market Opportunity Ranking & velocity tracker
+    trade_selector.py     Multi-trade candidate selection & risk filter
+    risk_manager.py       Stake clamping, daily loss limit & drawdown protection
+    trend_analyzer.py     EMA, RSI, MACD & market structure trend analysis
+    regime_filter.py      Chop/efficiency filter to skip noisy markets
+scripts/
+  deploy_cloud_run.ps1    Windows PowerShell deployment pipeline with GCS mount
+  deploy_cloud_run.sh     Linux/macOS Bash deployment pipeline
+  audit_live_status.py    CLI script to fetch and format live Cloud Run status
+tests/                    Pytest unit & integration test suite
+```
+
+---
+
+## Safety & Best Practices
+
+1. **Demo First**: Keep `MODE=demo` until your strategy demonstrates consistent positive Expected Value over at least 500 trades.
+2. **Fixed Stake Sizing**: Use `STAKE_MODE=flat` (default) to avoid exponential loss escalation.
+3. **Persistent Volume**: Ensure the GCS bucket mount at `/app/data` is active so learning states are preserved across deployments.
+4. **Cloud Run Instance Limit**: Always keep `--min-instances 1` and `--max-instances 1` to prevent multi-instance trade duplication.
+
+---
+
+## License & Disclaimer
+
+This project is open-source and intended for educational and research purposes. You are solely responsible for managing your financial risk, API tokens, and compliance with Deriv terms of service.
