@@ -462,7 +462,7 @@ async def root(_: Request) -> HTMLResponse:
     .panel-pair {{ display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; }}
     @media(max-width:700px) {{ .panel-pair {{ grid-template-columns:1fr; }} }}
   </style>
-  <meta http-equiv="refresh" content="15"/>
+  <meta http-equiv="refresh" content="45"/>
 </head>
 <body>
   <div class="card">

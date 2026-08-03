@@ -327,9 +327,9 @@ class TradingOrchestrator:
                 g_l,
             )
 
-        # Phase 4: Market Capital Allocation
-        # Rank active symbols by MPS, and only evaluate the top 5 markets
-        eval_symbols = self.profit_tracker.top_n_markets(self.active_symbols, n=5)
+        # Phase 4: Market Capital Allocation & Full Portfolio Scanning
+        # Evaluate all active symbols across all 20 markets
+        eval_symbols = self.profit_tracker.top_n_markets(self.active_symbols, n=len(self.active_symbols))
 
         for symbol in eval_symbols:
             # Soft session gate (FX weekend etc.)
@@ -720,7 +720,7 @@ class TradingOrchestrator:
                 )
 
         if not signals:
-            logger.info(
+            logger.debug(
                 "No signals ≥ %.0f%% confidence across %s markets "
                 "(anti_spiral=%s)",
                 min_conf * 100,
@@ -755,15 +755,21 @@ class TradingOrchestrator:
             pf = self.profit_tracker.get_profit_factor(sym, ct)
             trade_count = self.profit_tracker.get_trade_count(sym, ct)
             bucket = _bucket_for(best.get("confidence", 0.0))
-            is_healthy = self.calibration.is_healthy(bucket)
-            
-            # Edge Discovery Mode (First 200 trades) bypasses PF/MPS locks to build stats
-            is_discovery = trade_count < 200
-            
-            if not is_discovery and (mps < 50 or pf <= 1.0 or not is_healthy):
+            # Calibration health check must ALWAYS block severely overconfident buckets (>15% error)
+            if not is_healthy:
                 logger.info(
-                    "Phase 16 Ultimate Filter Blocked %s %s: mps=%.2f pf=%.2f healthy=%s (trades=%d)",
-                    sym, ct, mps, pf, is_healthy, trade_count
+                    "Phase 16 Calibration Block %s %s: bucket %s severely overconfident (>15%% error)",
+                    sym, ct, bucket
+                )
+                return None
+
+            # Edge Discovery Mode (First 50 trades) bypasses PF/MPS locks to build stats
+            is_discovery = trade_count < 50
+            
+            if not is_discovery and (mps < 50 or pf <= 1.0):
+                logger.info(
+                    "Phase 16 Ultimate Filter Blocked %s %s: mps=%.2f pf=%.2f (trades=%d)",
+                    sym, ct, mps, pf, trade_count
                 )
                 return None
 
@@ -809,7 +815,7 @@ class TradingOrchestrator:
 
         best = await self.scan_markets()
         if not best:
-            logger.info(
+            logger.debug(
                 "No qualifying signals | balance=%s %s open=%s strategies=%s",
                 balance,
                 self.client.get_currency(),

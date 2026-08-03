@@ -40,10 +40,10 @@ DEFAULT_PATH = Path("data/calibration_state.json")
 
 BUCKETS = ["50-60", "60-70", "70-80", "80-90", "90+"]
 
-# Phase 2 thresholds
-PHASE2_MIN_TRADES = 1000
+# Phase 2 thresholds (Activated early to protect capital when overconfident)
+PHASE2_MIN_TRADES = 30
 PHASE2_ERROR_THRESHOLD = 0.15
-PHASE2_CONSECUTIVE_AUDITS = 3
+PHASE2_CONSECUTIVE_AUDITS = 1
 
 
 def _bucket_for(confidence: float) -> str:
@@ -202,16 +202,29 @@ class CalibrationTracker:
 
     def apply_calibration(self, confidence: float) -> float:
         """
-        Phase 2 only: apply calibration factor to raw confidence.
-        Phase 1: returns raw confidence unchanged.
-
-        Safety rule: only deflate if auto_deflation_enabled=True,
-        which requires cumulative_trades > 1000 AND error persisted.
+        Applies calibration deflation factor to raw confidence.
+        If a confidence bucket is severely overconfident (>15% error),
+        deflates confidence so overconfident signals drop below min_confidence.
         """
-        if not self.auto_deflation_enabled:
-            return confidence
         bucket = _bucket_for(confidence)
         factor = self.calibration_factors.get(bucket)
+        if factor is None:
+            # Dynamic check: if bucket has >= 10 trades and >15% overconfidence, auto-deflate
+            b = self.buckets.get(bucket, {})
+            n = int(b.get("n", 0))
+            err = self.calibration_error(bucket)
+            if n >= 10 and err is not None and err > PHASE2_ERROR_THRESHOLD:
+                actual = self.actual_win_rate(bucket)
+                pred = self.avg_predicted(bucket)
+                if pred and pred > 0 and actual is not None:
+                    factor = min(1.0, max(0.1, round(actual / pred, 4)))
+                    self.calibration_factors[bucket] = factor
+                    self.auto_deflation_enabled = True
+                    self.save()
+                    logger.warning(
+                        "Auto-deflation dynamic activation for bucket %s: factor=%.4f (pred=%.3f actual=%.3f)",
+                        bucket, factor, pred, actual,
+                    )
         if factor is None:
             return confidence
         adjusted = confidence * factor
@@ -223,38 +236,29 @@ class CalibrationTracker:
 
     def audit_and_maybe_enable_deflation(self) -> None:
         """
-        Called after each AI audit (every 100 closed trades).
-
-        Phase 2 auto-deflation gates (approved):
-            cumulative_trades > 1000
-            AND calibration_error > 15%
-            AND that condition holds for 3 consecutive audits
+        Called after each AI audit or trade settlement.
         """
-        if self.cumulative_trades <= PHASE2_MIN_TRADES:
+        if self.cumulative_trades < PHASE2_MIN_TRADES:
             return
 
         updated = False
         for bucket in BUCKETS:
             err = self.calibration_error(bucket)
             n = int(self.buckets.get(bucket, {}).get("n", 0))
-            if err is None or n < 50:
+            if err is None or n < 10:
                 continue
             b = self.buckets[bucket]
             if err > PHASE2_ERROR_THRESHOLD:
-                # Overconfident beyond 15% — increment consecutive audit counter
                 b["consecutive_overconfident"] = int(b.get("consecutive_overconfident", 0)) + 1
             else:
                 b["consecutive_overconfident"] = 0
 
             consec = int(b.get("consecutive_overconfident", 0))
             if consec >= PHASE2_CONSECUTIVE_AUDITS:
-                # Activate deflation for this bucket:
-                # Adjusted = Raw * (actual / predicted)
                 actual = self.actual_win_rate(bucket)
                 pred = self.avg_predicted(bucket)
                 if pred and pred > 0 and actual is not None:
                     factor = round(actual / pred, 4)
-                    # Never inflate confidence; only deflate
                     factor = min(1.0, max(0.1, factor))
                     self.calibration_factors[bucket] = factor
                     self.auto_deflation_enabled = True

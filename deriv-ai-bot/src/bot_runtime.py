@@ -186,7 +186,7 @@ async def _trading_loop(rt: BotRuntime, cycle_seconds: int = 60) -> None:
                 "learning_keys": (status.get("learning") or {}).get("keys"),
                 "buffers": sizes,
             }
-            logger.info(
+            logger.debug(
                 "Heartbeat balance=%s %s open=%s daily_pnl=%s "
                 "risk_paused=%s rem=%sm reason=%s streak=%s auto_resumes=%s "
                 "tg_trading=%s min_conf=%s learn_keys=%s buffers=%s",
