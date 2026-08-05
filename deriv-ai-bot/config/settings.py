@@ -126,3 +126,7 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 # How many closed trades per symbol before triggering an analysis
 DEEPSEEK_ANALYZE_EVERY = _env_int("DEEPSEEK_ANALYZE_EVERY", 100)
+# How many most-recent trades per symbol to send to the LLM
+DEEPSEEK_MAX_TRADES = _env_int("DEEPSEEK_MAX_TRADES", 1000)
+# Max JSONL rows to scan globally when building symbol history
+DEEPSEEK_MAX_GLOBAL_TRADES = _env_int("DEEPSEEK_MAX_GLOBAL_TRADES", 10000)

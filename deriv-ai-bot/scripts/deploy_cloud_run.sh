@@ -70,8 +70,8 @@ gcloud run deploy "$SERVICE" \
   --max-instances 1 \
   --cpu-boost \
   "$CPU_FLAG" \
-  --set-env-vars "MODE=${MODE},EXECUTE_TRADES=true,PYTHONUNBUFFERED=1,TF_CPP_MIN_LOG_LEVEL=2,SAVE_TICK_HISTORY=false,TICK_HISTORY_COUNT=200" \
-  --set-secrets "DERIV_API_TOKEN=deriv-api-token:latest,DERIV_APP_ID=deriv-app-id:latest"
+  --env-vars-file "scripts/cloudrun-env.yaml" \
+  --set-secrets "DERIV_API_TOKEN=deriv-api-token:latest,DERIV_APP_ID=deriv-app-id:latest,TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_CHAT_ID=telegram-chat-id:latest,DEEPSEEK_API_KEY=deepseek-api-key:latest"
 
 # ── Artifact Registry cleanup policy ─────────────────────────────────────────
 # Keeps the 3 most recent images; deletes anything older than 7 days.

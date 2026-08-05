@@ -756,7 +756,7 @@ class TradingOrchestrator:
             trade_count = self.profit_tracker.get_trade_count(sym, ct)
             bucket = _bucket_for(best.get("confidence", 0.0))
             # Calibration health check must ALWAYS block severely overconfident buckets (>15% error)
-            if not is_healthy:
+            if not self.calibration.is_healthy(bucket):
                 logger.info(
                     "Phase 16 Calibration Block %s %s: bucket %s severely overconfident (>15%% error)",
                     sym, ct, bucket

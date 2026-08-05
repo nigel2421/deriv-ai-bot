@@ -33,8 +33,8 @@ STATE_PATH = Path("data/deepseek_state.json")  # per-symbol close counters
 DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_ANALYZE_EVERY = 100     # trades per market before triggering
-MAX_HISTORY_TRADES = 500        # most-recent trades per symbol sent to LLM
-MAX_GLOBAL_TRADES = 2000        # max rows scanned from JSONL for context
+DEFAULT_MAX_HISTORY_TRADES = 1000  # most-recent trades per symbol sent to LLM
+DEFAULT_MAX_GLOBAL_TRADES = 10000  # max rows scanned from JSONL for context
 
 _SYSTEM_PROMPT = """\
 You are an expert quantitative analyst for a Deriv binary options AI trading bot.
@@ -97,6 +97,12 @@ class DeepSeekAdvisor:
         ).rstrip("/")
         self.analyze_every: int = max(
             10, int(os.getenv("DEEPSEEK_ANALYZE_EVERY", str(DEFAULT_ANALYZE_EVERY)))
+        )
+        self.max_history_trades: int = max(
+            10, int(os.getenv("DEEPSEEK_MAX_TRADES", str(DEFAULT_MAX_HISTORY_TRADES)))
+        )
+        self.max_global_trades: int = max(
+            100, int(os.getenv("DEEPSEEK_MAX_GLOBAL_TRADES", str(DEFAULT_MAX_GLOBAL_TRADES)))
         )
 
         # Per-symbol close counters since last analysis (in-memory + persisted)
@@ -162,16 +168,18 @@ class DeepSeekAdvisor:
 
     # ── Trade history loading ─────────────────────────────────────────────────
 
-    def _load_symbol_history(self, symbol: str, max_trades: int = MAX_HISTORY_TRADES) -> List[Dict[str, Any]]:
+    def _load_symbol_history(self, symbol: str, max_trades: Optional[int] = None) -> List[Dict[str, Any]]:
         """Load the most-recent `max_trades` closed trades for `symbol` from GCS-backed JSONL."""
+        if max_trades is None:
+            max_trades = self.max_history_trades
         if not self.history_path.is_file():
             return []
         trades: List[Dict[str, Any]] = []
         try:
             with self.history_path.open("r", encoding="utf-8") as f:
                 all_lines = f.readlines()
-            # Scan last MAX_GLOBAL_TRADES rows (avoid reading entire file for huge histories)
-            for line in all_lines[-MAX_GLOBAL_TRADES:]:
+            # Scan last max_global_trades rows (avoid reading entire file for huge histories)
+            for line in all_lines[-self.max_global_trades:]:
                 line = line.strip()
                 if not line:
                     continue
@@ -469,6 +477,7 @@ class DeepSeekAdvisor:
         return {
             "enabled": self.enabled,
             "analyze_every": self.analyze_every,
+            "max_history_trades": self.max_history_trades,
             "model": self.model,
             "symbol_status": symbol_status,
             "latest_report": latest,

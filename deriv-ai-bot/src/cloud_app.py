@@ -563,7 +563,7 @@ async def root(_: Request) -> HTMLResponse:
 
   <div class="card">
     <h2>&#129504; DeepSeek AI Advisor</h2>
-    <p class="muted">Per-market deep analysis triggers every 100 closed trades per symbol. Reads full GCS trade history for accuracy.</p>
+    <p class="muted">Per-market deep analysis triggers every 100 closed trades per symbol. Reads up to <b>1000</b> most-recent trades from full GCS trade history for accuracy.</p>
     {_fmt_deepseek_panel(s)}
   </div>
 
@@ -671,7 +671,7 @@ def _fmt_deepseek_panel(s: dict) -> str:
         """
 
     return (
-        f"<p class='muted' style='margin:0 0 0.75rem'>Model: <code>{model}</code> · Trigger: every <code>{every}</code> closes per symbol · Analyzed: <code>{ds.get('total_symbols_analyzed', 0)}</code> markets</p>"
+        f"<p class='muted' style='margin:0 0 0.75rem'>Model: <code>{model}</code> · Trigger: every <code>{every}</code> closes per symbol · History depth: <code>{ds.get('max_history_trades', 1000)}</code> trades · Analyzed: <code>{ds.get('total_symbols_analyzed', 0)}</code> markets</p>"
         + table_html
         + rec_html
     )

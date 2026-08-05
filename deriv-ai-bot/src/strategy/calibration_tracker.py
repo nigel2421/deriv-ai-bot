@@ -40,10 +40,10 @@ DEFAULT_PATH = Path("data/calibration_state.json")
 
 BUCKETS = ["50-60", "60-70", "70-80", "80-90", "90+"]
 
-# Phase 2 thresholds (Activated early to protect capital when overconfident)
-PHASE2_MIN_TRADES = 30
+# Phase 2 thresholds
+PHASE2_MIN_TRADES = 1000
 PHASE2_ERROR_THRESHOLD = 0.15
-PHASE2_CONSECUTIVE_AUDITS = 1
+PHASE2_CONSECUTIVE_AUDITS = 3
 
 
 def _bucket_for(confidence: float) -> str:
@@ -203,28 +203,13 @@ class CalibrationTracker:
     def apply_calibration(self, confidence: float) -> float:
         """
         Applies calibration deflation factor to raw confidence.
-        If a confidence bucket is severely overconfident (>15% error),
-        deflates confidence so overconfident signals drop below min_confidence.
+        Phase 1 (auto_deflation_enabled=False): returns confidence unchanged.
+        Phase 2 (auto_deflation_enabled=True): applies stored calibration_factors.
         """
+        if not self.auto_deflation_enabled:
+            return confidence
         bucket = _bucket_for(confidence)
         factor = self.calibration_factors.get(bucket)
-        if factor is None:
-            # Dynamic check: if bucket has >= 10 trades and >15% overconfidence, auto-deflate
-            b = self.buckets.get(bucket, {})
-            n = int(b.get("n", 0))
-            err = self.calibration_error(bucket)
-            if n >= 10 and err is not None and err > PHASE2_ERROR_THRESHOLD:
-                actual = self.actual_win_rate(bucket)
-                pred = self.avg_predicted(bucket)
-                if pred and pred > 0 and actual is not None:
-                    factor = min(1.0, max(0.1, round(actual / pred, 4)))
-                    self.calibration_factors[bucket] = factor
-                    self.auto_deflation_enabled = True
-                    self.save()
-                    logger.warning(
-                        "Auto-deflation dynamic activation for bucket %s: factor=%.4f (pred=%.3f actual=%.3f)",
-                        bucket, factor, pred, actual,
-                    )
         if factor is None:
             return confidence
         adjusted = confidence * factor
