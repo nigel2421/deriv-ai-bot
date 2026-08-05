@@ -83,6 +83,7 @@ class BotRuntime:
             "transition_matrix": risk.get("transition_matrix") or {},
             "mor": risk.get("mor") or {},
             "correlation": risk.get("correlation") or {},
+            "deepseek": risk.get("deepseek") or {},
             "risk": {
                 k: risk.get(k)
                 for k in (

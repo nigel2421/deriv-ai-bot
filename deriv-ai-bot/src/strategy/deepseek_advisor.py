@@ -475,7 +475,8 @@ class DeepSeekAdvisor:
             )
 
         return {
-            "enabled": self.enabled,
+            "enabled": self.enabled and bool(self.api_key),
+            "has_api_key": bool(self.api_key),
             "analyze_every": self.analyze_every,
             "max_history_trades": self.max_history_trades,
             "model": self.model,
