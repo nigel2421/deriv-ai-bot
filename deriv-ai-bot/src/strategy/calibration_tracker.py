@@ -168,7 +168,10 @@ class CalibrationTracker:
     def is_healthy(self, bucket: str) -> bool:
         """
         Phase 8/10/16: Returns False if calibration error >= 15% (SEVERELY OVERCONFIDENT).
+        Phase 1 (<1000 trades): display & alert only — does not block trades.
         """
+        if self.cumulative_trades < PHASE2_MIN_TRADES:
+            return True
         err = self.calibration_error(bucket)
         if err is None:
             return True # allow if insufficient data
@@ -203,10 +206,10 @@ class CalibrationTracker:
     def apply_calibration(self, confidence: float) -> float:
         """
         Applies calibration deflation factor to raw confidence.
-        Phase 1 (auto_deflation_enabled=False): returns confidence unchanged.
-        Phase 2 (auto_deflation_enabled=True): applies stored calibration_factors.
+        Phase 1 (auto_deflation_enabled=False or <1000 trades): returns confidence unchanged.
+        Phase 2 (auto_deflation_enabled=True & >=1000 trades): applies stored calibration_factors.
         """
-        if not self.auto_deflation_enabled:
+        if not self.auto_deflation_enabled or self.cumulative_trades < PHASE2_MIN_TRADES:
             return confidence
         bucket = _bucket_for(confidence)
         factor = self.calibration_factors.get(bucket)

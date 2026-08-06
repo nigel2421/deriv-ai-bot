@@ -8,7 +8,7 @@
     -->
     <global>
         <!-- Raise/lower trade gate here only (e.g. 0.75 or 0.85) -->
-        <min_confidence>0.82</min_confidence>
+        <min_confidence>0.78</min_confidence>
         <!-- flat = never double after loss (recommended). martingale = optional. -->
         <stake_mode>flat</stake_mode>
         <!-- Tighter daily loss: stop digging when demo is bleeding -->
@@ -255,10 +255,8 @@
             <!-- 5t is the most reliably accepted duration on Boom/Crash -->
             <duration>5</duration>
             <duration_unit>t</duration_unit>
-            <!-- CALL+PUT: Deriv accepts both; bot will follow trend direction -->
             <contract_types>
                 <type>CALL</type>
-                <type>PUT</type>
             </contract_types>
         </strategy>
     </market>
@@ -271,7 +269,6 @@
             <duration_unit>t</duration_unit>
             <contract_types>
                 <type>CALL</type>
-                <type>PUT</type>
             </contract_types>
         </strategy>
     </market>
@@ -283,9 +280,7 @@
             <base_stake>1.0</base_stake>
             <duration>5</duration>
             <duration_unit>t</duration_unit>
-            <!-- CALL+PUT: Deriv accepts both; bot will follow trend direction -->
             <contract_types>
-                <type>CALL</type>
                 <type>PUT</type>
             </contract_types>
         </strategy>
@@ -298,7 +293,6 @@
             <duration>5</duration>
             <duration_unit>t</duration_unit>
             <contract_types>
-                <type>CALL</type>
                 <type>PUT</type>
             </contract_types>
         </strategy>

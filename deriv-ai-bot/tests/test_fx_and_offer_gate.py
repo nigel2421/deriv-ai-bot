@@ -79,3 +79,20 @@ def test_offer_gate_blocks_then_expires_logic():
         "BOOM500", contract_type="CALL", duration=5, duration_unit="m"
     )
     assert blocked2 is False
+
+
+def test_boom_crash_contract_sanitization():
+    from src.strategy.session_hours import is_boom_symbol, is_crash_symbol, sanitize_contracts_for_symbol
+
+    assert is_boom_symbol("BOOM500") is True
+    assert is_boom_symbol("BOOM1000") is True
+    assert is_crash_symbol("CRASH500") is True
+    assert is_crash_symbol("CRASH1000") is True
+
+    # BOOM should only allow CALL
+    assert sanitize_contracts_for_symbol("BOOM500", ["CALL", "PUT"]) == ["CALL"]
+    # CRASH should only allow PUT
+    assert sanitize_contracts_for_symbol("CRASH500", ["CALL", "PUT"]) == ["PUT"]
+    # Normal symbols should allow both
+    assert sanitize_contracts_for_symbol("R_100", ["CALL", "PUT"]) == ["CALL", "PUT"]
+

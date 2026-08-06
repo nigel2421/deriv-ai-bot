@@ -30,6 +30,28 @@ def is_boom_crash(symbol: str) -> bool:
     return s.startswith("BOOM") or s.startswith("CRASH")
 
 
+def is_boom_symbol(symbol: str) -> bool:
+    return str(symbol or "").upper().startswith("BOOM")
+
+
+def is_crash_symbol(symbol: str) -> bool:
+    return str(symbol or "").upper().startswith("CRASH")
+
+
+def sanitize_contracts_for_symbol(symbol: str, contract_types: list[str]) -> list[str]:
+    """
+    Enforce Deriv market restrictions:
+    - BOOM indices only offer CALL for Rise/Fall
+    - CRASH indices only offer PUT for Rise/Fall
+    """
+    if is_boom_symbol(symbol):
+        return [t for t in contract_types if t.upper() == "CALL"]
+    if is_crash_symbol(symbol):
+        return [t for t in contract_types if t.upper() == "PUT"]
+    return contract_types
+
+
+
 def is_spike_synthetic(symbol: str) -> bool:
     """Markets that typically reject multi-minute rise/fall durations."""
     s = str(symbol or "").upper()

@@ -43,10 +43,13 @@ from src.strategy.deepseek_advisor import DeepSeekAdvisor
 from src.strategy.profit_tracker import ProfitTracker
 from src.strategy.market_offer_gate import MarketOfferGate
 from src.strategy.session_hours import (
+    is_boom_symbol,
+    is_crash_symbol,
     is_fx_symbol,
     is_likely_session_open,
     is_spike_synthetic,
     preferred_minute_duration,
+    sanitize_contracts_for_symbol,
 )
 from src.ai.predictor import Predictor
 from src.utils.telegram_bot import TelegramBot
@@ -366,8 +369,13 @@ class TradingOrchestrator:
                 digit_allowed = []
                 if not rf_allowed:
                     rf_allowed = ["CALL", "PUT"]
+            # Boom / Crash indices: directional rise/fall only (no digits)
+            if is_boom_symbol(symbol) or is_crash_symbol(symbol):
+                digit_allowed = []
+                if not rf_allowed:
+                    rf_allowed = ["CALL"] if is_boom_symbol(symbol) else ["PUT"]
             # If allow-list empty, permit digits (incl. even/odd) + rise/fall
-            if not allowed and not is_fx_symbol(symbol):
+            if not allowed and not is_fx_symbol(symbol) and not is_boom_symbol(symbol) and not is_crash_symbol(symbol):
                 digit_allowed = [
                     "DIGITOVER",
                     "DIGITUNDER",
@@ -375,6 +383,9 @@ class TradingOrchestrator:
                     "DIGITODD",
                 ]
                 rf_allowed = ["CALL", "PUT"]
+
+            # Enforce directional rules (Boom -> CALL only, Crash -> PUT only)
+            rf_allowed = sanitize_contracts_for_symbol(symbol, rf_allowed)
 
             candidates: list = []
 
