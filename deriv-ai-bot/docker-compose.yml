@@ -1,48 +1,108 @@
 services:
-  bot:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bot-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-deriv_trading_db}
+      POSTGRES_USER: ${POSTGRES_USER:-deriv_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deriv_secure_pass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deriv_user -d deriv_trading_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: bot-redis
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  market-data:
     build: .
-    container_name: deriv-ai-bot
+    container_name: bot-market-data
+    restart: always
+    command: python -m src.services.market_data_service
     env_file:
       - .env
     environment:
-      - MODE=${MODE:-demo}
-      - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
+      - ENABLE_POSTGRES=true
+      - ENABLE_REDIS=true
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+  trading-engine:
+    build: .
+    container_name: bot-trading-engine
+    restart: always
+    command: python -m src.services.trading_engine_service
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+      - MODE=${MODE:-demo}
+      - ENABLE_POSTGRES=true
+      - ENABLE_REDIS=true
     volumes:
       - ./data:/app/data
-      - ./src/models:/app/src/models
-      - ./config:/app/config:ro
-    restart: unless-stopped
-    # Cloud-compatible entry (HTTP + bot). For CLI-only: python src/main.py
-    ports:
-      - "8080:8080"
-    command:
-      [
-        "sh",
-        "-c",
-        "uvicorn src.cloud_app:app --host 0.0.0.0 --port 8080 --workers 1",
-      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
-  # Optional local dashboard (read-only artifacts). Not required for trading.
-  dashboard:
+  learning-engine:
     build: .
-    container_name: deriv-ai-dashboard
-    profiles: ["dashboard"]
+    container_name: bot-learning-engine
+    restart: always
+    command: python -m src.services.learning_engine_service
     env_file:
       - .env
     environment:
       - PYTHONPATH=/app
+      - ENABLE_POSTGRES=true
+      - ENABLE_REDIS=true
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  api-dashboard:
+    build: .
+    container_name: bot-api-dashboard
+    restart: always
+    command: uvicorn src.cloud_app:app --host 0.0.0.0 --port 8080 --workers 2
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+      - ENABLE_POSTGRES=true
+      - ENABLE_REDIS=true
+    ports:
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./data:/app/data:ro
-      - ./src/models:/app/src/models:ro
-    ports:
-      - "8501:8501"
-    command:
-      [
-        "streamlit",
-        "run",
-        "src/dashboard/app.py",
-        "--server.address=0.0.0.0",
-        "--server.port=8501",
-      ]
-    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

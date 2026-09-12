@@ -55,6 +55,8 @@ pytest==9.1.1
 python-dateutil==2.9.0.post0
 # python-deriv-api is NOT used — this project uses websocket-client (DerivClient).
 # python-deriv-api==0.1.6 requires websockets==10.3 and conflicts with websockets>=11.
+psycopg2-binary>=2.9.9
+redis>=5.0.0
 python-dotenv==1.2.2
 python-multipart==0.0.32
 python-telegram-bot==22.8

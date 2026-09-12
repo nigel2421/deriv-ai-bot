@@ -134,7 +134,8 @@ async def _trading_loop(rt: BotRuntime, cycle_seconds: int = 60) -> None:
             # Keep WS alive — reconnect if dropped
             if not client.connected or not client.authorized:
                 logger.warning("WS disconnected — reconnecting…")
-                ok = await client.connect()
+                # force_url_refresh=True: v2 OTP URLs are single-use; must re-fetch
+                ok = await client.connect(force_url_refresh=True)
                 if ok:
                     client.subscribe_balance()
                     syms = list(orch.active_symbols or SYMBOLS)
@@ -225,7 +226,8 @@ async def _trading_loop(rt: BotRuntime, cycle_seconds: int = 60) -> None:
                 except Exception:
                     pass
                 try:
-                    ok = await client.connect()
+                    # force_url_refresh=True: v2 OTP URLs are single-use; must re-fetch
+                    ok = await client.connect(force_url_refresh=True)
                     if ok:
                         client.subscribe_balance()
                         fetcher.subscribe_symbols(

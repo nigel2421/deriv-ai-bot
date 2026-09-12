@@ -75,6 +75,7 @@ class DerivClient:
         self._balance_subscribed = False
         self._ws_url: Optional[str] = None
         self.last_error: Optional[str] = None
+        self._last_message_at: float = 0.0  # epoch; for zombie detection
 
     # ------------------------------------------------------------------ handlers
     def register_handler(self, msg_type: str, handler: MessageHandler) -> None:
@@ -92,7 +93,7 @@ class DerivClient:
             return self._req_id
 
     # ------------------------------------------------------------------ lifecycle
-    async def connect(self) -> bool:
+    async def connect(self, *, force_url_refresh: bool = False) -> bool:
         """Establish WebSocket connection (legacy authorize or v2 OTP URL)."""
         self._loop = asyncio.get_running_loop()
         self._closing = False
@@ -102,6 +103,8 @@ class DerivClient:
 
         try:
             if self.api_mode == "v2":
+                # Always get a fresh OTP URL — v2 OTP URLs are single-use / time-limited.
+                # Reusing a cached URL after disconnect causes all proposals to fail.
                 url = await self._resolve_v2_url()
             else:
                 # Prefer modern host; binaryws still works for numeric app ids
@@ -202,10 +205,12 @@ class DerivClient:
             # Classic flow: authorize with API token
             ws.send(json.dumps({"authorize": self.token}))
         else:
-            # V2 OTP URL is pre-authenticated; confirm with balance when loop is ready
+            # V2 OTP URL is pre-authenticated via the REST OTP endpoint before connecting.
+            # Mark authorized so connect() polling exits cleanly.
+            # Note: connect() will still run a balance probe to confirm the session is valid.
             self.authorized = True
             logger.info(
-                "V2 OTP socket open — treating as authorized (account=%s).",
+                "V2 OTP socket open (account=%s) — awaiting balance probe to confirm.",
                 self.account.get("loginid"),
             )
             # Resubscribe streams after reconnect
@@ -218,6 +223,7 @@ class DerivClient:
                 self.subscribe_balance()
 
     def on_message(self, ws, message: str) -> None:
+        self._last_message_at = time.time()  # track liveness for zombie detection
         try:
             data = json.loads(message)
         except json.JSONDecodeError:
@@ -340,7 +346,9 @@ class DerivClient:
                     retries,
                 )
                 await asyncio.sleep(wait)
-                ok = await self.connect()
+                # force_url_refresh=True ensures v2 OTP URL is always regenerated,
+                # not reused (OTP URLs are single-use and expire quickly).
+                ok = await self.connect(force_url_refresh=True)
                 if ok:
                     return
             logger.error("Max reconnection attempts reached.")
@@ -377,6 +385,8 @@ class DerivClient:
         Send a message with req_id and wait for the matching response.
 
         If raise_on_error is True and the payload contains error, raises DerivAPIError.
+        On timeout, forces the socket closed so the trading loop reconnects with a
+        fresh OTP URL (fixes zombie connections where socket is open but unresponsive).
         """
         if not self._loop:
             raise RuntimeError("Client not connected (no event loop). Call connect() first.")
@@ -394,6 +404,22 @@ class DerivClient:
         except asyncio.TimeoutError:
             with self._lock:
                 self._pending.pop(req_id, None)
+            # Zombie socket: connected but unresponsive — force close so the
+            # trading loop's reconnect path fetches a fresh v2 OTP URL.
+            logger.error(
+                "Request timed out after %.0fs (keys=%s). "
+                "Last message %.0fs ago. Forcing WS reconnect.",
+                timeout,
+                list(msg.keys()),
+                time.time() - self._last_message_at if self._last_message_at else -1,
+            )
+            self.authorized = False
+            self.connected = False
+            try:
+                if self.ws:
+                    self.ws.close()
+            except Exception:
+                pass
             raise TimeoutError(
                 f"Deriv request timed out after {timeout}s: {list(msg.keys())}"
             ) from None

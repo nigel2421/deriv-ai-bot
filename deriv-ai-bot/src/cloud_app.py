@@ -897,11 +897,54 @@ def _fmt_correlation_panel(s: dict) -> str:
     )
 
 
+
+async def diag(_: Request) -> JSONResponse:
+    """
+    Diagnostic endpoint: exposes live bot internals for debugging.
+    Shows last proposal/buy errors, offer gate blocks, WS state, account info.
+    """
+    rt = runtime
+    orch = rt.orchestrator
+    client = rt.client
+    out: dict = {
+        "bot_status": rt.status,
+        "last_error": rt.last_error,
+        "ws_connected": client.connected if client else None,
+        "ws_authorized": client.authorized if client else None,
+        "api_mode": client.api_mode if client else None,
+        "account": {
+            "loginid": (client.account or {}).get("loginid"),
+            "balance": (client.account or {}).get("balance"),
+            "currency": (client.account or {}).get("currency"),
+        } if client else {},
+    }
+    if orch is not None:
+        try:
+            out["executor_last_error"] = orch.executor.last_error
+        except Exception:
+            pass
+        try:
+            out["offer_gate"] = orch.offer_gate.snapshot()
+        except Exception:
+            pass
+        try:
+            risk = orch.risk_status()
+            out["recent_trades_errors"] = [
+                {k: t.get(k) for k in ("status", "symbol", "contract_type", "error", "offer_reason", "ts")}
+                for t in (risk.get("recent_trades") or [])
+                if t.get("status") in {"failed_offer", "failed", "buy_failed"}
+            ][-10:]
+        except Exception:
+            pass
+    return JSONResponse(out)
+
+
 routes = [
     Route("/", root),
     Route("/health", health),
     Route("/ready", ready),
     Route("/status", status),
+    Route("/diag", diag),
     Route("/control/resume", control_resume, methods=["GET", "POST"]),
     Route("/control/pause", control_pause, methods=["GET", "POST"]),
     Route("/control/restart", control_restart, methods=["GET", "POST"]),
