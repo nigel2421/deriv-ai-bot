@@ -133,6 +133,10 @@ class TelegramBot:
 
             await self.app.initialize()
             await self.app.start()
+            try:
+                await self._bot.delete_webhook(drop_pending_updates=True)
+            except Exception as dw_err:
+                logger.debug("delete_webhook: %s", dw_err)
             # PTB v20+: updater lives on application
             if self.app.updater:
                 await self.app.updater.start_polling(
@@ -168,14 +172,23 @@ class TelegramBot:
             return True
         except Exception as e:
             self._last_error = str(e)
-            logger.error("Failed to start Telegram bot: %s", e)
+            logger.warning("Telegram command polling disabled (%s). Falling back to send-only mode.", e)
+            if self.app:
+                try:
+                    if self.app.updater and self.app.updater.running:
+                        await self.app.updater.stop()
+                    await self.app.stop()
+                    await self.app.shutdown()
+                except Exception as shutdown_err:
+                    logger.debug("Telegram app shutdown cleanup: %s", shutdown_err)
+                self.app = None
             self._started = False
             # Fall back to bare Bot for send-only
             try:
                 from telegram import Bot
 
                 self._bot = Bot(token=str(self.token))
-                logger.info("Telegram send-only mode (no command polling).")
+                logger.info("Telegram send-only mode active.")
             except Exception as e2:
                 logger.error("Telegram Bot init failed: %s", e2)
                 self._bot = None

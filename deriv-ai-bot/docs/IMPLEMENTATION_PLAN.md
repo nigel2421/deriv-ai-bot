@@ -1,194 +1,283 @@
-# Implementation Plan — Intelligent Multi-Horizon Trading Bot
+# Implementation Plan — Deriv AI Evolutionary Trading Bot
 
-**Date:** 2026-07-17  
-**Repo assets:** 31 Binary Bot XML files under `xml bots/`  
-**Goal:** Tick + minute horizons, smart trade-type selection, stop loss spirals, grow from community bot ideas without copying reckless martingale.
-
----
-
-## 0. Inventory of `xml bots/` (what the community bots actually do)
-
-| Category | Files (examples) | Contracts | Notes for us |
-|----------|------------------|-----------|--------------|
-| **Digit OVER** | Over 1-2, Over 2, Over 2-3, Convoy, Ricochet, Solitary, Smart Brain, Queue 2 | DIGITOVER | Prefer lower barriers (1–3) for higher hit-rate |
-| **Digit UNDER** | Under-7, Under8, Queue 7, Mount Anda | DIGITUNDER | Prefer high barriers (7–8) |
-| **Even/Odd** | Binary Bots Africa EO, Everest EO, martingale.xml | DIGITEVEN/ODD | Parity-only path |
-| **Differ** | Digit Differ, Dollar path, SM, Kenya | DIGITDIFF | High payout / low hit-rate — optional only |
-| **Rise/Fall (CALL/PUT)** | EMA 12&26, bulls/bears, five candle, candle oscillator 2m, Trend Lover, dream, ICEBOX, Bronze | CALL/PUT | Many use **candles + RSI/EMA/MACD**, often **minutes** |
-| **Martingale** | Almost all (326 refs) | sizing | Dangerous; we must **cap or replace** |
-
-**Dominant markets in XMLs:** `R_100`, `R_10`, some 1HZ. Almost no Boom/Crash in these files.
-
-**Implication:** Build **two engines**:
-1. **Tick engine** — digits + short CALL/PUT (current).  
-2. **Minute/candle engine** — Rise/Fall with EMA/RSI/candle patterns (from XML packs).
+**Last Updated:** 2026-09-17  
+**Current Status:** Stages 1–8 complete and running. Stage 9 (Knowledge Graph) next.
 
 ---
 
-## 1. Problem: “Same down pits” / losses pile up
-
-### Root causes today
-1. **Martingale** doubles stake after losses → one bad streak digs a hole.  
-2. **Same symbol + same contract type** re-selected after losses (learner not strict enough).  
-3. **force_resume / martingale reset** can re-open deactivated markets.  
-4. **High trade frequency** (many symbols × 45s cycles) increases exposure to noise.  
-5. **No “cooldown per setup”** — only global consecutive-loss pause.
-
-### Immediate fixes (Phase A — do first)
-| Fix | Behavior |
-|-----|----------|
-| **A1 Flat stake default** | `stake_mode=flat` (no double); martingale optional via config |
-| **A2 Setup cooldown** | After 2 losses on `symbol\|type`, ban that setup 15–30 min |
-| **A3 Symbol cooldown** | After 3 losses on a symbol, skip symbol for N minutes |
-| **A4 Stricter learner skip** | Skip if WR < 40% after 5 samples; cold streak 2 (not 4) |
-| **A5 Soft landing** | After global 3 losses, only take conf ≥ 0.88 for 20 min |
-| **A6 No martingale reset on resume** | Resume clears pause only; does **not** reset all martingales |
-| **A7 Daily loss hard stop** | Already have %; enforce and surface on dashboard |
-
----
-
-## 2. Architecture target
+## 📍 Where We Are
 
 ```
-                    ┌─────────────────────┐
-                    │   Market Scanner    │
-                    │  (symbols + ticks)  │
-                    └──────────┬──────────┘
-           ┌───────────────────┼───────────────────┐
-           ▼                   ▼                   ▼
-   ┌───────────────┐  ┌────────────────┐  ┌─────────────────┐
-   │ Tick Digit    │  │ Tick Rise/Fall │  │ Minute Candle   │
-   │ OVER/UNDER/EO │  │ CALL/PUT       │  │ CALL/PUT (OHLC) │
-   └───────┬───────┘  └───────┬────────┘  └────────┬────────┘
-           │                  │                    │
-           └──────────────────┼────────────────────┘
-                              ▼
-                 ┌────────────────────────┐
-                 │ Intelligent Selector   │
-                 │ score = conf + learn   │
-                 │       - risk penalty   │
-                 │ + horizon fit          │
-                 └───────────┬────────────┘
-                             ▼
-                 ┌────────────────────────┐
-                 │ Risk / Anti-spiral     │
-                 │ stake · cooldowns ·    │
-                 │ daily cap · pause      │
-                 └───────────┬────────────┘
-                             ▼
-                      Proposal → Buy
+Stage 1  ✅  Agent Reputation Engine         (rolling win-rate → dynamic vote weight)
+Stage 2  ✅  Chief Strategy Agent            (Meta-Agent — promotes/quarantines)
+Stage 3  ✅  Trade Memory Database           (full trade context in PostgreSQL)
+Stage 4  ✅  Reinforcement Learning Agent    (Q-Learning from live trade outcomes)
+Stage 5  ✅  Portfolio Manager Agent         (hard financial rules, 1% risk, $1 min)
+Stage 6  ✅  Market Regime Agent             (TRENDING/CHOP/VOLATILE gating)
+Stage 7  ✅  Agent Breeding System           (Genetic Algorithm — evolving DNA)
+Stage 8  ✅  Infrastructure Agent            (CPU/RAM/Redis/Postgres health monitor)
+Stage 9  🔜  Knowledge Graph (Neo4j)         (relationship pattern discovery)
 ```
 
 ---
 
-## 3. Phased delivery
+## ✅ Completed Work (Stages 1–8)
 
-### Phase A — Anti-spiral + XML learnings (1–2 days) ✅ partially done / ship next
-- [x] Adaptive barriers, digit queue, regime filter, resume controls  
-- [ ] Flat stake default; martingale opt-in  
-- [ ] Setup + symbol cooldowns  
-- [ ] Stricter learner bans  
-- [ ] Don’t reset martingale on force_resume  
-- [ ] Port **SureBet queue 2/7** fully (already partial in `digit_queue.py`)  
-- [ ] Port **Over 1–2 / Under 7–8** preference bands into barrier picker  
+### Stage 1 — Agent Reputation Engine
+**File:** `src/agents/reputation.py`
 
-### Phase B — Intelligent trade-type selection (2–3 days)
-- [ ] **TradeTypeRouter**: scores DIGIT* vs CALL/PUT from regime  
-  - Chop → prefer EVEN/ODD or skip  
-  - Strong trend → CALL/PUT only  
-  - Digit queue fire → digits only  
-- [ ] **Diversity rule**: max 2 trades in a row same `symbol|type`  
-- [ ] **Expected-value gate**: skip if learner EV < 0 for that setup  
-- [ ] Dashboard: show last 10 trades + cooldowns  
-
-### Phase C — Minute / candle engine (3–5 days)
-- [ ] Candle builder from ticks (1m / 2m OHLC)  
-- [ ] Port EMA 12/26, RSI, candle color, 5-candle pattern from XMLs  
-- [ ] Duration: `duration_unit=m`, duration 1–5 minutes for CALL/PUT  
-- [ ] Separate min_confidence for minutes (e.g. 0.75–0.82)  
-- [ ] Only one open minute trade at a time (longer hold)  
-
-### Phase D — Markets beyond volatility (2–3 days, careful)
-| Priority | Markets | Why |
-|----------|---------|-----|
-| P0 | Keep R_* + 1HZ | Proven on our stack |
-| P1 | Step indices (if options support) | Cleaner for Rise/Fall |
-| P2 | Jump (limited) | Needs event filter |
-| P3 | Boom/Crash | **Not** for digit martingale; separate spike module later |
-| Avoid for now | Forex multi-pair dump | Different session/duration model |
-
-Each new symbol: dry-run proposal only → then small stake.
-
-### Phase E — XML import pipeline (optional, 2 days)
-- [ ] Parser for Binary Bot Blockly fields → JSON recipe  
-- [ ] Map recipe → our signal plugins  
-- [ ] Do **not** auto-enable martingale from XML  
-
----
-
-## 4. Intelligent selection rules (product spec)
+Each agent has a rolling window of its last 100 trade outcomes. The win-rate in that window directly controls its vote multiplier in the next consensus round.
 
 ```
-IF chop_score high:
-    prefer DIGITEVEN/ODD if parity_conf >= 0.75 else SKIP
-ELIF digit_queue triggered:
-    trade queue type only (digits)
-ELIF trend strong AND tools agree:
-    trade CALL/PUT (tick or minute depending on candle strength)
-ELIF digit model conf >= min_conf:
-    trade OVER/UNDER with adaptive barrier
-ELSE:
-    SKIP  (no force trade)
+accuracy ≥ 75% → 1.80x weight  (elite)
+accuracy ≥ 70% → 1.50x weight  (strong)
+accuracy ≥ 55% → 1.20x weight  (solid)
+accuracy ≥ 45% → 0.90x weight  (weak)
+accuracy  < 45% → 0.50x weight  (on notice)
 ```
 
-**Never:**
-- Increase stake after loss by default  
-- Re-enter same setup within cooldown  
-- Trade if daily loss limit hit  
-- Trade if symbol on ban list  
+State persisted to `data/agent_reputation.json`.
 
 ---
 
-## 5. Success metrics
+### Stage 2 — Chief Strategy Agent (Meta-Agent)
+**File:** `src/agents/chief_strategy_agent.py`
 
-| Metric | Target |
-|--------|--------|
-| Max single-trade stake | ≤ MAX_STAKE (e.g. $5–8) |
-| Max daily drawdown | ≤ 2–3% session start |
-| Same setup losses before ban | 2 |
-| Trades/hour | lower than today; quality > quantity |
-| Win rate by family | tracked in learner; auto-skip < 40% |
-| Minute engine | ≥ paper accuracy before live execute |
+The Meta-Agent runs periodic reviews over all specialist agents:
+
+- Win-rate > 70% (≥20 trades sample) → **Promote** (increase weight cap)
+- Win-rate < 35% (≥20 trades sample) → **Quarantine** (disable the agent)
+- Publishes leaderboard to the dashboard via `/status` API
 
 ---
 
-## 6. Suggested build order (next PRs)
+### Stage 3 — Trade Memory Database
+**File:** `database/init.sql` table `trade_memory`
 
-1. **PR1 Anti-spiral** — cooldowns, flat stake, stricter bans, resume fix  
-2. **PR2 Router** — intelligent family selection  
-3. **PR3 Candles** — 1m OHLC + EMA/RSI CALL/PUT minutes  
-4. **PR4 Markets** — Step pilot + proposal dry-run  
-5. **PR5 XML recipes** — import top 5 bots as config recipes  
+Every trade is stored with:
+
+| Column | Description |
+|---|---|
+| `symbol` | Market traded |
+| `contract_type` | CALL / PUT / DIGITOVER etc |
+| `stake` | Stake amount |
+| `duration` | Contract duration |
+| `agent_votes` | JSON blob — all agent signals with confidence |
+| `consensus_conf` | Final confidence score |
+| `market_regime` | Regime at execution time |
+| `rl_boost` | RL agent modifier applied |
+| `result` | win / loss |
+| `profit` | Actual PnL |
+| `created_at` | Timestamp |
 
 ---
 
-## 7. Config knobs (strategy.xml / env)
+### Stage 4 — Reinforcement Learning Agent
+**File:** `src/agents/rl_agent.py`
 
-```xml
-<global>
-  <min_confidence>0.80</min_confidence>
-  <stake_mode>flat</stake_mode>          <!-- flat | martingale -->
-  <setup_cooldown_minutes>20</setup_cooldown_minutes>
-  <symbol_cooldown_losses>3</symbol_cooldown_losses>
-  <soft_landing_losses>3</soft_landing_losses>
-  <soft_landing_min_conf>0.88</soft_landing_min_conf>
-  <enable_minute_engine>true</enable_minute_engine>
-  <minute_duration>2</minute_duration>
-</global>
+Q-Learning agent using trade outcome as reward signal.
+
+```
+State:  (regime, trend_dir, volatility_band)  → ~48 states
+Action: CALL | PUT | SKIP
+Reward: +profit on win, -loss on loss, -0.1 on skip
+
+Q(s,a) ← Q(s,a) + α[r + γ·max Q(s',a') − Q(s,a)]
+  α = 0.1 (learning rate)
+  γ = 0.95 (discount factor)
+  ε = 0.9 → 0.1 (exploration decay over time)
+```
+
+Q-table persisted to `data/rl_qtable.json`.
+
+---
+
+### Stage 5 — Portfolio Manager Agent
+**File:** `src/agents/portfolio_manager_agent.py`
+
+**Hard rules — no agent can override:**
+
+```python
+MIN_STAKE        = 1.00   # USD — Deriv min is 0.50
+RISK_PER_TRADE   = 0.01   # 1% of balance
+MAX_OPEN_TRADES  = 20   # 1 per market sub-agent (20 markets watched)
+MAX_DAILY_LOSS   = 0.03   # 3% of session start balance → HALT
+```
+
+Position sizing formula:
+```
+stake = balance × RISK_PER_TRADE
+stake = max(MIN_STAKE, min(stake, MAX_STAKE))
+```
+
+If `daily_loss ≥ 3%` → trading halted until next session.
+
+---
+
+### Stage 6 — Market Regime Agent
+**File:** `src/agents/market_regime_agent.py`
+
+```
+TRENDING        → ADX > 25, EMA slope strong
+SIDEWAYS_CHOP   → ADX < 20, tight Bollinger range
+HIGH_VOLATILITY → ATR > mean + 2σ
+SLOW            → tick velocity < threshold
+```
+
+Regime controls which agent strategies are gated in/out per cycle.
+
+---
+
+### Stage 7 — Agent Breeding System
+**File:** `src/agents/breeding_system.py`
+
+Genetic Algorithm over `StrategyDNA` objects:
+
+```
+DNA genes: ema_period, rsi_threshold, confidence_threshold,
+           volatility_filter, regime_preference
+
+Fitness   = win_rate × avg_pnl
+
+Lifecycle:
+  1. Score population by fitness
+  2. Select top 50% as parents
+  3. Crossover (gene-level mix from two parents)
+  4. Mutate (Gaussian noise on continuous genes)
+  5. Spawn offspring as new specialist agents
+  6. Cull bottom 25%
+```
+
+Evolution triggers every N completed trades or on a timer cycle.
+
+---
+
+### Stage 8 — Infrastructure Agent
+**File:** `src/agents/infrastructure_agent.py`
+
+| Resource | Monitoring | Alert Threshold |
+|---|---|---|
+| CPU | `psutil.cpu_percent()` | > 85% |
+| RAM | `psutil.virtual_memory()` | > 90% |
+| Disk | `psutil.disk_usage('/')` | > 90% |
+| Redis | PING | fail → reconnect |
+| PostgreSQL | SELECT 1 | fail → reconnect |
+
+Publishes telemetry every 30 seconds to `TOPIC_ALERTS`. Dashboard reads it via `/status`.
+
+---
+
+## 🔜 Stage 9 — Knowledge Graph (Neo4j) [NEXT]
+
+### Goal
+Replace rows-only thinking with **relationship-aware pattern discovery**. Instead of asking "which trades won?" we ask "which *combinations* of agents, markets, and regimes produce the best outcomes?"
+
+### Architecture
+
+```
+Neo4j Graph Schema
+───────────────────
+Nodes:
+  (:Trade   { id, timestamp, profit, result })
+  (:Agent   { name, type, current_weight })
+  (:Market  { symbol, family })
+  (:Strategy{ dna_id, fitness_score })
+  (:Regime  { type })               # TRENDING | CHOP | etc
+  (:Outcome { result, profit })
+
+Edges:
+  (Trade)-[:EXECUTED_ON]  →(Market)
+  (Trade)-[:DETECTED_BY]  →(Agent)
+  (Trade)-[:USED_STRATEGY]→(Strategy)
+  (Trade)-[:DURING_REGIME]→(Regime)
+  (Trade)-[:RESULTED_IN]  →(Outcome)
+  (Agent)-[:BRED_FROM]    →(Agent)   # lineage tracking
+```
+
+### Example Graph Queries (Cypher)
+
+```cypher
+-- Find best agent combinations on R_100
+MATCH (t:Trade)-[:EXECUTED_ON]->(m:Market {symbol:'R_100'}),
+      (t)-[:DETECTED_BY]->(a:Agent),
+      (t)-[:RESULTED_IN]->(o:Outcome)
+RETURN a.name, count(t), avg(o.profit)
+ORDER BY avg(o.profit) DESC
+
+-- Which strategy DNA wins most during TRENDING regime?
+MATCH (t:Trade)-[:DURING_REGIME]->(r:Regime {type:'TRENDING'}),
+      (t)-[:USED_STRATEGY]->(s:Strategy),
+      (t)-[:RESULTED_IN]->(o:Outcome {result:'win'})
+RETURN s.dna_id, count(t) as wins
+ORDER BY wins DESC LIMIT 10
+```
+
+### New Files Required
+
+| File | Purpose |
+|---|---|
+| `src/agents/knowledge_graph_agent.py` | Ingests trade data into Neo4j after each trade |
+| `src/agents/graph_intelligence_agent.py` | Runs Cypher pattern queries, outputs recommendations |
+
+### Docker Changes
+
+```yaml
+# Add to docker-compose.yml
+neo4j:
+  image: neo4j:5-community
+  container_name: bot-neo4j
+  ports:
+    - "127.0.0.1:7474:7474"   # Browser UI
+    - "127.0.0.1:7687:7687"   # Bolt protocol
+  environment:
+    NEO4J_AUTH: "neo4j/derivbot2026"
+  volumes:
+    - neo4j_data:/data
+```
+
+### New Dependencies
+
+```
+neo4j>=5.0.0        # Neo4j Python driver
 ```
 
 ---
 
-## 8. Risk disclaimer
+## 📅 Roadmap Summary
 
-Community XMLs heavily use martingale and “sure bet” branding. Our edge is **filters + bankroll**, not doubling down. Expanding to minutes and more markets only helps if anti-spiral stays strict.
+| Stage | Feature | Status | File |
+|---|---|---|---|
+| 1 | Agent Reputation Engine | ✅ Done | `agents/reputation.py` |
+| 2 | Chief Strategy Agent (Meta-Agent) | ✅ Done | `agents/chief_strategy_agent.py` |
+| 3 | Trade Memory Database | ✅ Done | `database/init.sql` |
+| 4 | RL Agent (Q-Learning) | ✅ Done | `agents/rl_agent.py` |
+| 5 | Portfolio Manager Agent | ✅ Done | `agents/portfolio_manager_agent.py` |
+| 6 | Market Regime Agent | ✅ Done | `agents/market_regime_agent.py` |
+| 7 | Agent Breeding System (GA) | ✅ Done | `agents/breeding_system.py` |
+| 8 | Infrastructure Agent | ✅ Done | `agents/infrastructure_agent.py` |
+| 9 | Knowledge Graph (Neo4j) | 🔜 Next | `agents/knowledge_graph_agent.py` |
+| 10 | GraphIntelligence + Recommendations | 🔜 Future | `agents/graph_intelligence_agent.py` |
+| 11 | Agent Lineage Tracking (breeding family tree) | 🔜 Future | Graph extension |
+| 12 | Strategy Market Condition Matching | 🔜 Future | Uses graph queries |
+| 13 | Self-Evolving Cypher Query Generator | 🔜 Future | LLM + Graph |
+
+---
+
+## 🗂️ Original Phase Plan (Tick Engine vs Candle Engine)
+
+The original two-engine plan from 2026-07-17 remains partially open:
+
+### Phase A — Anti-spiral Hardening ✅ Done
+Flat stake, cooldowns, daily loss hard stop, min confidence gates.
+
+### Phase B — Intelligent Trade-Type Router 🔜 Partial
+The regime agent handles rough gating. A dedicated `TradeTypeRouter` that scores DIGIT* vs CALL/PUT from regime hasn't been built as a standalone module yet.
+
+### Phase C — Minute/Candle Engine 🔜 Planned
+1m/2m OHLC candle builder from ticks, EMA 12/26, RSI, port from XML bots.
+
+### Phase D — Extended Market Coverage ✅ Done via Sub-Agents
+All 20 markets now have dedicated sub-agents streaming live.
+
+### Phase E — XML Import Pipeline 🔜 Optional
+Parser for Binary Bot Blockly → JSON recipe for our signal plugins.

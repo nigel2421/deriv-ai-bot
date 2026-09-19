@@ -250,9 +250,165 @@ class DatabaseManager:
                 return json.loads(val)
             except json.JSONDecodeError:
                 return val
+    def record_trade_memory(self, memory_payload: Dict[str, Any]) -> bool:
+        """Store comprehensive trade telemetry (ticks, indicators, votes) into PostgreSQL trade_memory."""
+        conn = self.get_connection()
+        if not conn or not memory_payload:
+            return False
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO trade_memory (
+                        contract_id, symbol, contract_type, stake, pnl, profit,
+                        status, confidence, ensemble_score, tick_history,
+                        indicators_snapshot, agent_votes, feature_vector, opened_at, closed_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s
+                    )
+                    ON CONFLICT (contract_id) DO UPDATE SET
+                        pnl = EXCLUDED.pnl,
+                        profit = EXCLUDED.profit,
+                        status = EXCLUDED.status,
+                        closed_at = EXCLUDED.closed_at;
+                    """,
+                    (
+                        memory_payload.get("contract_id"),
+                        memory_payload.get("symbol"),
+                        memory_payload.get("contract_type"),
+                        float(memory_payload.get("stake", 1.0)),
+                        float(memory_payload.get("pnl", 0.0)) if memory_payload.get("pnl") is not None else None,
+                        float(memory_payload.get("profit", 0.0)) if memory_payload.get("profit") is not None else None,
+                        memory_payload.get("status", "open"),
+                        float(memory_payload.get("confidence", 0.80)),
+                        float(memory_payload.get("ensemble_score", 0.80)),
+                        json.dumps(memory_payload.get("ticks", [])),
+                        json.dumps(memory_payload.get("indicators", {})),
+                        json.dumps(memory_payload.get("agent_votes", [])),
+                        json.dumps(memory_payload.get("feature_vector", {})),
+                        memory_payload.get("opened_at") or datetime.now(timezone.utc),
+                        memory_payload.get("closed_at"),
+                    ),
+                )
+                conn.commit()
+            return True
         except Exception as e:
-            logger.error("Redis get error key=%s: %s", key, e)
-            return None
+            logger.error("Failed to record trade_memory in DB: %s", e)
+            conn.rollback()
+            return False
+        finally:
+            self.release_connection(conn)
+
+    def fetch_trade_memories(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Fetch rich trade memories for offline AI model training."""
+        conn = self.get_connection()
+        if not conn:
+            return []
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT * FROM trade_memory
+                    ORDER BY id DESC
+                    LIMIT %s;
+                    """,
+                    (limit,),
+                )
+                return [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            logger.error("Failed to fetch trade_memory from DB: %s", e)
+            return []
+        finally:
+            self.release_connection(conn)
+
+
+
+
+    def record_votes(self, votes: List[Dict[str, Any]]) -> bool:
+        """Record consensus agent votes in PostgreSQL."""
+        conn = self.get_connection()
+        if not conn or not votes:
+            return False
+
+        try:
+            with conn.cursor() as cur:
+                for v in votes:
+                    cur.execute(
+                        """
+                        INSERT INTO agent_votes (
+                            symbol, contract_type, agent_name, confidence, weight, weighted_score, rationale
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s);
+                        """,
+                        (
+                            v.get("symbol"),
+                            v.get("contract_type"),
+                            v.get("agent_name"),
+                            float(v.get("confidence", 0.0)),
+                            float(v.get("weight", 1.0)),
+                            float(v.get("score", 0.0)),
+                            v.get("rationale", ""),
+                        ),
+                    )
+                conn.commit()
+            return True
+        except Exception as e:
+            logger.error("Failed to record agent votes in DB: %s", e)
+            conn.rollback()
+            return False
+        finally:
+            self.release_connection(conn)
+
+    def fetch_agent_states(self) -> List[Dict[str, Any]]:
+        """Fetch all agent states from PostgreSQL."""
+        conn = self.get_connection()
+        if not conn:
+            return []
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                cur.execute("SELECT * FROM agent_states ORDER BY agent_name;")
+                return [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            logger.error("Failed to fetch agent states: %s", e)
+            return []
+        finally:
+            self.release_connection(conn)
+
+    def update_agent_state(self, agent_name: str, enabled: Optional[bool] = None, status: Optional[str] = None, weight: Optional[float] = None) -> bool:
+        """Update agent status/weight in agent_states table."""
+        conn = self.get_connection()
+        if not conn:
+            return False
+        try:
+            with conn.cursor() as cur:
+                updates = []
+                params = []
+                if enabled is not None:
+                    updates.append("enabled = %s")
+                    params.append(enabled)
+                if status is not None:
+                    updates.append("status = %s")
+                    params.append(status)
+                if weight is not None:
+                    updates.append("weight = %s")
+                    params.append(weight)
+
+                updates.append("last_heartbeat = CURRENT_TIMESTAMP")
+                if updates:
+                    query = f"UPDATE agent_states SET {', '.join(updates)} WHERE agent_name = %s;"
+                    params.append(agent_name)
+                    cur.execute(query, tuple(params))
+                    conn.commit()
+            return True
+        except Exception as e:
+            logger.error("Failed to update agent state for %s: %s", agent_name, e)
+            conn.rollback()
+            return False
+        finally:
+            self.release_connection(conn)
 
 
 db_manager = DatabaseManager.get_instance()
+

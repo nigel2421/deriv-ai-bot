@@ -2,7 +2,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: bot-postgres
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-deriv_trading_db}
       POSTGRES_USER: ${POSTGRES_USER:-deriv_user}
@@ -13,7 +13,7 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U deriv_user -d deriv_trading_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-deriv_user} -d ${POSTGRES_DB:-deriv_trading_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -21,35 +21,41 @@ services:
   redis:
     image: redis:7-alpine
     container_name: bot-redis
-    restart: always
+    restart: unless-stopped
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
     ports:
       - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  market-data:
+  agent-manager:
     build: .
-    container_name: bot-market-data
-    restart: always
-    command: python -m src.services.market_data_service
+    container_name: bot-agent-manager
+    restart: unless-stopped
+    command: python -c "import asyncio, logging; from src.agents.manager import AgentManager; logging.basicConfig(level=logging.INFO); mgr = AgentManager(); asyncio.run(mgr.start())"
     env_file:
       - .env
     environment:
       - PYTHONPATH=/app
       - ENABLE_POSTGRES=true
       - ENABLE_REDIS=true
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
       redis:
-        condition: service_started
+        condition: service_healthy
       postgres:
         condition: service_healthy
 
   trading-engine:
     build: .
     container_name: bot-trading-engine
-    restart: always
-    command: python -m src.services.trading_engine_service
+    restart: unless-stopped
+    command: python -m src.main
     env_file:
       - .env
     environment:
@@ -57,37 +63,19 @@ services:
       - MODE=${MODE:-demo}
       - ENABLE_POSTGRES=true
       - ENABLE_REDIS=true
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./data:/app/data
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
-
-  learning-engine:
-    build: .
-    container_name: bot-learning-engine
-    restart: always
-    command: python -m src.services.learning_engine_service
-    env_file:
-      - .env
-    environment:
-      - PYTHONPATH=/app
-      - ENABLE_POSTGRES=true
-      - ENABLE_REDIS=true
-    volumes:
-      - ./data:/app/data
-    depends_on:
-      postgres:
         condition: service_healthy
-      redis:
-        condition: service_started
 
   api-dashboard:
     build: .
     container_name: bot-api-dashboard
-    restart: always
+    restart: unless-stopped
     command: uvicorn src.cloud_app:app --host 0.0.0.0 --port 8080 --workers 2
     env_file:
       - .env
@@ -95,14 +83,18 @@ services:
       - PYTHONPATH=/app
       - ENABLE_POSTGRES=true
       - ENABLE_REDIS=true
+      - REDIS_URL=redis://redis:6379/0
     ports:
-      - "127.0.0.1:8080:8080"
+      - "0.0.0.0:8080:8080"
     volumes:
-      - ./data:/app/data:ro
+      - ./data:/app/data
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
 volumes:
   postgres_data:
   redis_data:
+

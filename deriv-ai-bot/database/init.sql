@@ -139,3 +139,84 @@ CREATE TABLE IF NOT EXISTS performance_metrics (
 );
 
 CREATE INDEX IF NOT EXISTS idx_perf_metrics_ts ON performance_metrics (timestamp DESC);
+
+-- 8. Live Agent Health & Runtime States
+CREATE TABLE IF NOT EXISTS agent_states (
+    agent_name VARCHAR(64) PRIMARY KEY,
+    enabled BOOLEAN DEFAULT TRUE,
+    status VARCHAR(32) DEFAULT 'stopped', -- starting, running, paused, stopped, error
+    weight NUMERIC(5, 4) DEFAULT 1.0000,
+    win_rate NUMERIC(5, 2) DEFAULT 0.00,
+    total_signals INT DEFAULT 0,
+    successful_signals INT DEFAULT 0,
+    last_heartbeat TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    metadata JSONB DEFAULT '{}'
+);
+
+-- Seed core default agents into agent_states
+INSERT INTO agent_states (agent_name, enabled, status, weight)
+VALUES 
+    ('TrendAgent', true, 'running', 1.2000),
+    ('VolatilityAgent', true, 'running', 1.0000),
+    ('PatternAgent', true, 'running', 1.1000),
+    ('ScalpingAgent', true, 'running', 1.0000),
+    ('RiskAgent', true, 'running', 1.5000),
+    ('ExecutionAgent', true, 'running', 1.0000),
+    ('LearningAgent', true, 'running', 1.0000)
+ON CONFLICT (agent_name) DO NOTHING;
+
+-- 9. Agent Decision Votes Audit Log
+CREATE TABLE IF NOT EXISTS agent_votes (
+    id BIGSERIAL PRIMARY KEY,
+    symbol VARCHAR(32) NOT NULL,
+    contract_type VARCHAR(32) NOT NULL,
+    agent_name VARCHAR(64) NOT NULL,
+    confidence NUMERIC(5, 4) NOT NULL,
+    weight NUMERIC(5, 4) NOT NULL,
+    weighted_score NUMERIC(5, 4) NOT NULL,
+    rationale TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_votes_symbol_agent ON agent_votes (symbol, agent_name, created_at DESC);
+
+-- 10. Multi-Account / Multi-Tenant Profiles
+CREATE TABLE IF NOT EXISTS user_accounts (
+    id SERIAL PRIMARY KEY,
+    account_id VARCHAR(64) UNIQUE NOT NULL,
+    user_id VARCHAR(64) NOT NULL DEFAULT 'default_user',
+    account_mode VARCHAR(16) NOT NULL CHECK (account_mode IN ('demo', 'real')),
+    currency VARCHAR(8) DEFAULT 'USD',
+    balance NUMERIC(12, 2) DEFAULT 0.00,
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO user_accounts (account_id, account_mode, currency, balance)
+VALUES ('CR_DEMO_01', 'demo', 'USD', 10000.00)
+ON CONFLICT (account_id) DO NOTHING;
+
+-- 11. Deep Trade Memory & Feature Store (Dataset Generator)
+CREATE TABLE IF NOT EXISTS trade_memory (
+    id BIGSERIAL PRIMARY KEY,
+    contract_id BIGINT UNIQUE NOT NULL,
+    symbol VARCHAR(32) NOT NULL,
+    contract_type VARCHAR(32) NOT NULL,
+    stake NUMERIC(10, 2) NOT NULL,
+    pnl NUMERIC(10, 2),
+    profit NUMERIC(10, 2),
+    status VARCHAR(32) NOT NULL,
+    confidence NUMERIC(5, 4) NOT NULL,
+    ensemble_score NUMERIC(5, 4) NOT NULL,
+    tick_history JSONB NOT NULL DEFAULT '[]',
+    indicators_snapshot JSONB NOT NULL DEFAULT '{}',
+    agent_votes JSONB NOT NULL DEFAULT '[]',
+    feature_vector JSONB NOT NULL DEFAULT '{}',
+    opened_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_trade_memory_sym_status ON trade_memory (symbol, status);
+CREATE INDEX IF NOT EXISTS idx_trade_memory_opened ON trade_memory (opened_at DESC);
+
+

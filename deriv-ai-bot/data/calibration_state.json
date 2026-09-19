@@ -1,0 +1,38 @@
+{
+  "buckets": {
+    "50-60": {
+      "predicted_sum": 0.0,
+      "n": 0,
+      "wins": 0,
+      "consecutive_overconfident": 0
+    },
+    "60-70": {
+      "predicted_sum": 0.0,
+      "n": 0,
+      "wins": 0,
+      "consecutive_overconfident": 0
+    },
+    "70-80": {
+      "predicted_sum": 0.0,
+      "n": 0,
+      "wins": 0,
+      "consecutive_overconfident": 0
+    },
+    "80-90": {
+      "predicted_sum": 1.76,
+      "n": 2,
+      "wins": 2,
+      "consecutive_overconfident": 0
+    },
+    "90+": {
+      "predicted_sum": 0.0,
+      "n": 0,
+      "wins": 0,
+      "consecutive_overconfident": 0
+    }
+  },
+  "cumulative_trades": 2,
+  "auto_deflation_enabled": false,
+  "calibration_factors": {},
+  "updated_at": 1789653528.6676974
+}

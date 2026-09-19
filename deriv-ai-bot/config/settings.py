@@ -97,11 +97,13 @@ MIN_NET_RETURN = _env_float("MIN_NET_RETURN", 0.5)
 # Minimum account balance required to open a new trade
 MIN_BALANCE = _env_float("MIN_BALANCE", 1.0)
 # Max concurrent open contracts
-MAX_OPEN_TRADES = _env_int("MAX_OPEN_TRADES", 3)
+MAX_OPEN_TRADES = _env_int("MAX_OPEN_TRADES", 20)  # 1 per market sub-agent (20 markets)
 # Max stake as % of live balance (tight default — stops $60 martingale blowups)
 MAX_STAKE_PCT = _env_float("MAX_STAKE_PCT", 1.0)
-# Floor/ceiling stake (Deriv demo min is often 0.35)
-MIN_STAKE = _env_float("MIN_STAKE", 0.35)
+# Floor/ceiling stake (set to 1.00 USD)
+MIN_STAKE = max(1.00, _env_float("MIN_STAKE", 1.00))
+
+
 # Hard max stake in account currency (blocks 2^n martingale runaway)
 _raw_max_stake = os.getenv("MAX_STAKE")
 MAX_STAKE = float(_raw_max_stake) if _raw_max_stake not in (None, "") else 8.0
@@ -132,3 +134,7 @@ DEEPSEEK_ANALYZE_EVERY = _env_int("DEEPSEEK_ANALYZE_EVERY", 100)
 DEEPSEEK_MAX_TRADES = _env_int("DEEPSEEK_MAX_TRADES", 1000)
 # Max JSONL rows to scan globally when building symbol history
 DEEPSEEK_MAX_GLOBAL_TRADES = _env_int("DEEPSEEK_MAX_GLOBAL_TRADES", 10000)
+
+# Multi-Agent Trading System Framework Toggle (defaults to True)
+ENABLE_MULTI_AGENT = _env_bool("ENABLE_MULTI_AGENT", True)
+

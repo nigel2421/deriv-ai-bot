@@ -1,9 +1,10 @@
 import asyncio
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from config.settings import (
+    ENABLE_MULTI_AGENT,
     EXECUTE_TRADES,
     LEARNING_ALWAYS,
     LEARNING_PATH,
@@ -53,9 +54,84 @@ from src.strategy.session_hours import (
 )
 from src.ai.predictor import Predictor
 from src.utils.telegram_bot import TelegramBot
+from src.agents.bus import AgentEventBus
+from src.agents.market_scanner_agent import MarketScannerAgent
+from src.agents.trend_agent import TrendAgent
+from src.agents.volatility_agent import VolatilityAgent
+from src.agents.pattern_agent import PatternAgent
+from src.agents.learning_agent import LearningAgent
+from src.agents.consensus_agent import ConsensusAgent
+from src.agents.risk_agent import RiskAgent
+from src.agents.execution_agent import ExecutionAgent
+from src.agents.base_agent import AgentSignal
 from datetime import datetime, timezone
 
+
 logger = logging.getLogger(__name__)
+
+
+def is_boom_crash_post_spike_cooldown(symbol: str, ticks: Sequence[Dict[str, Any]], cooldown_ticks: int = 30) -> bool:
+    """Optimization #5: Boom/Crash 30-tick post-spike cooldown filter."""
+    if not (is_boom_symbol(symbol) or is_crash_symbol(symbol)):
+        return False
+    if not ticks or len(ticks) < cooldown_ticks:
+        return False
+    recent = ticks[-cooldown_ticks:]
+    quotes = [t.get("quote", 0.0) if isinstance(t, dict) else float(t) for t in recent]
+    diffs = [quotes[i] - quotes[i-1] for i in range(1, len(quotes))]
+    if not diffs:
+        return False
+    if is_boom_symbol(symbol):
+        pos_diffs = [d for d in diffs if d > 0]
+        if pos_diffs:
+            avg_pos = sum(pos_diffs) / len(pos_diffs)
+            if max(diffs) > max(1.0, avg_pos * 3.5):
+                return True
+    elif is_crash_symbol(symbol):
+        neg_diffs = [abs(d) for d in diffs if d < 0]
+        if neg_diffs:
+            avg_neg = sum(neg_diffs) / len(neg_diffs)
+            if abs(min(diffs)) > max(1.0, avg_neg * 3.5):
+                return True
+    return False
+
+
+def calculate_atr_scaled_duration(ticks: Sequence[Dict[str, Any]], base_duration: Optional[int] = 5, unit: Optional[str] = "t") -> Tuple[int, str]:
+    """Optimization #1: ATR & Volatility-Adaptive Expiry Duration Scaling."""
+    dur = base_duration if base_duration is not None else 5
+    u = unit or "t"
+    if not ticks or len(ticks) < 15:
+        return dur, u
+    quotes = [t.get("quote", 0.0) if isinstance(t, dict) else float(t) for t in ticks[-20:]]
+    diffs = [abs(quotes[i] - quotes[i-1]) for i in range(1, len(quotes))]
+    if not diffs:
+        return dur, u
+    avg_diff = sum(diffs) / len(diffs)
+    price_mean = sum(quotes) / len(quotes)
+    vol_ratio = (avg_diff / max(1e-5, price_mean)) * 1000.0
+
+    if u == "t":
+        if vol_ratio > 2.5:
+            dur = max(8, min(10, dur + 3))
+        elif vol_ratio > 1.5:
+            dur = max(6, min(8, dur + 1))
+    elif u == "m":
+        if vol_ratio > 2.5:
+            dur = max(5, dur + 2)
+    return dur, u
+
+
+def check_multi_timeframe_alignment(ticks: Sequence[Dict[str, Any]], contract_type: str) -> bool:
+    """Optimization #2: Multi-Timeframe Alignment Gate (lookback 50 vs lookback 100)."""
+    if not is_rise_fall(contract_type):
+        return True
+    if not ticks or len(ticks) < 80:
+        return True
+    htf = analyze_trend(ticks, lookback=100)
+    htf_ct = htf.get("contract_type")
+    if htf_ct and htf_ct != contract_type and float(htf.get("confidence") or 0.0) >= 0.78:
+        return False
+    return True
 
 
 class TradingOrchestrator:
@@ -133,6 +209,19 @@ class TradingOrchestrator:
         # Persistent trade history file (append-only JSONL) — Recs #5, #8, #10
         self._trade_history_path = Path("data/trade_history.jsonl")
         self._trade_history_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Multi-Agent AI System Framework
+        self.enable_multi_agent = bool(ENABLE_MULTI_AGENT)
+        self.event_bus = AgentEventBus()
+        self.market_scanner_agent = MarketScannerAgent()
+        self.trend_agent = TrendAgent()
+        self.volatility_agent = VolatilityAgent()
+        self.pattern_agent = PatternAgent()
+        self.learning_agent = LearningAgent()
+        self.consensus_agent = ConsensusAgent(min_consensus_score=self.min_confidence)
+        self.risk_agent = RiskAgent()
+        self.execution_agent = ExecutionAgent(self.executor)
+
 
         # Prefer env SYMBOLS; ensure strategy.xml markets are covered when listed
         xml_syms = self.parser.market_symbols()
@@ -307,13 +396,155 @@ class TradingOrchestrator:
                 self.risk_manager.set_session_balance(bal)
         return bal
 
+    async def scan_markets_multi_agent(self) -> Optional[Dict[str, Any]]:
+        """
+        Multi-Agent Scanning & Consensus Pipeline:
+        1. MarketScannerAgent screens market accessibility and tick buffers across all symbols.
+        2. TrendAgent, VolatilityAgent, and PatternAgent independently analyze each market.
+        3. LearningAgent adjusts confidence levels and retrieves agent weights.
+        4. ConsensusAgent aggregates ensemble votes into a ConsensusDecision.
+        5. EV Engine & Correlation Filter rank and refine trade candidates.
+        """
+        min_conf = self.min_confidence
+
+        cold_penalty = 0.0
+        g_w = int(getattr(self.learner, "global_wins", 0) or 0)
+        g_l = int(getattr(self.learner, "global_losses", 0) or 0)
+        g_n = g_w + g_l
+        if g_n >= 8 and g_w / max(1, g_n) < 0.45:
+            cold_penalty = 0.04
+            min_conf = min(0.92, min_conf + cold_penalty)
+
+        # Step 1: Scan markets
+        scanned_meta = await self.market_scanner_agent.evaluate({
+            "symbols": self.active_symbols,
+            "fetcher": self.fetcher,
+            "offer_gate": self.offer_gate,
+        })
+        scanned_symbols = [sig.symbol for sig in scanned_meta]
+
+        candidates: list = []
+
+        for symbol in scanned_symbols:
+            ticks = self.fetcher.get_recent_data(symbol, 120)
+            if not ticks:
+                continue
+
+            # Optimization #5: Boom/Crash 30-tick post-spike cooldown filter
+            if is_boom_crash_post_spike_cooldown(symbol, ticks, 30):
+                logger.info("Skip %s: post-spike 30-tick cooldown filter active", symbol)
+                continue
+
+            runtime = self.strategy_engine.get(symbol)
+            if not runtime or not runtime.is_tradeable():
+                continue
+
+            allowed_raw = runtime.allowed_types or []
+            allowed = [t for t in (normalize_contract_type(x) for x in allowed_raw) if t]
+            if not allowed and not is_fx_symbol(symbol) and not is_boom_symbol(symbol) and not is_crash_symbol(symbol):
+                allowed = ["DIGITOVER", "DIGITUNDER", "DIGITEVEN", "DIGITODD", "CALL", "PUT"]
+
+            eval_context = {
+                "symbol": symbol,
+                "ticks": ticks,
+                "allowed_types": allowed,
+            }
+
+            # Step 2: Gather specialized agent signals
+            agent_signals: List[AgentSignal] = []
+            agent_signals.extend(await self.trend_agent.evaluate(eval_context))
+            agent_signals.extend(await self.volatility_agent.evaluate(eval_context))
+            agent_signals.extend(await self.pattern_agent.evaluate(eval_context))
+
+            if not agent_signals:
+                continue
+
+            # Step 3: Learning Agent confidence adjustments
+            adjusted_signals = await self.learning_agent.evaluate({
+                "incoming_signals": agent_signals,
+                "symbol": symbol,
+            })
+
+            # Step 4: Consensus Agent voting (with Optimization #3: min_quorum >= 2 check)
+            decision = self.consensus_agent.form_consensus(
+                symbol=symbol,
+                signals=adjusted_signals,
+                min_confidence=min_conf,
+            )
+
+            if decision and decision.raw_intent:
+                intent = decision.raw_intent
+                ct = decision.contract_type
+
+                # Optimization #2: Multi-timeframe HTF alignment gate
+                if not check_multi_timeframe_alignment(ticks, ct):
+                    logger.info("Skip %s %s: multi-timeframe HTF trend alignment conflict", symbol, ct)
+                    continue
+
+                # Anti-spiral check
+                ok_as, why = self.anti_spiral.allow(symbol, str(ct), decision.confidence)
+                if not ok_as:
+                    logger.info("MultiAgent AntiSpiral block %s %s: %s", symbol, ct, why)
+                    continue
+
+                # Optimization #1: Dynamic Expiry Scaling by Volatility/ATR
+                base_dur = intent.get("duration") or 5
+                base_unit = intent.get("duration_unit") or "t"
+                scaled_dur, scaled_unit = calculate_atr_scaled_duration(ticks, base_dur, base_unit)
+                intent["duration"] = scaled_dur
+                intent["duration_unit"] = scaled_unit
+
+                intent["confidence"] = decision.confidence
+                intent["ensemble_score"] = decision.ensemble_score
+                intent["raw_confidence"] = decision.confidence
+                intent["strategy"] = "MultiAgentConsensus"
+                intent["participating_agents"] = [v.agent_name for v in decision.votes]
+                intent["mor_score"] = self.mor_tracker.update_score(symbol, decision.ensemble_score)
+                intent["payout_rate"] = DEFAULT_PAYOUT_RATE
+
+                # Optimization #4: Live Payout EV Gating (EV >= +0.08 USD)
+                ev_val = compute_ev(decision.confidence, intent["payout_rate"])
+                if ev_val < 0.08:
+                    logger.info("Skip %s %s: EV %.3f < +0.08 threshold", symbol, ct, ev_val)
+                    continue
+                intent["ev"] = ev_val
+
+                intent["mps"] = self.profit_tracker.get_mps(symbol, ct)
+                intent["base_stake"] = float(intent.get("stake", MIN_STAKE))
+                intent["stake"] = float(intent.get("stake", MIN_STAKE))
+
+                candidates.append(intent)
+
+        if not candidates:
+            return None
+
+        # EV ranking & filtering
+        candidates = ev_rank(candidates, allow_negative=False)
+        if not candidates:
+            return None
+
+        # Correlation filtering
+        candidates = self.correlation_filter.filter_candidates(candidates)
+        if not candidates:
+            return None
+
+        best = self.selector.select_best_trade(candidates)
+        if best:
+            self.anti_spiral.note_selected(str(best["symbol"]), str(best["contract_type"]))
+
+        return best
+
     async def scan_markets(self) -> Optional[Dict[str, Any]]:
         """
         Scan all markets for Digits + Rise/Fall candidates.
-        Apply adaptive learning, enforce min_confidence (>=80%), pick best market.
+        If multi-agent mode is enabled, delegate to scan_markets_multi_agent().
         """
+        if getattr(self, "enable_multi_agent", False):
+            return await self.scan_markets_multi_agent()
+
         signals = []
         min_conf = self.min_confidence
+
 
         # Cold-start hardening: when overall learning is underwater, demand more edge
         cold_penalty = 0.0
@@ -1207,6 +1438,17 @@ class TradingOrchestrator:
                 )
                 self.anti_spiral.record(symbol, str(contract_type), is_win)
 
+                # Multi-Agent Learning Agent outcome recording
+                participating = meta.get("participating_agents") or ["TrendAgent", "PatternAgent"]
+                self.learning_agent.record_trade_outcome(
+                    symbol=symbol,
+                    contract_type=str(contract_type),
+                    won=is_win,
+                    participating_agents=participating,
+                    profit=profit,
+                )
+
+
         # DeepSeek per-market analysis (triggers every 100 closes for this symbol)
         if symbol:
             ds_report = self.deepseek_advisor.record_close(symbol)
@@ -1395,6 +1637,24 @@ class TradingOrchestrator:
         except Exception as e:
             logger.debug("Trade history append failed: %s", e)
 
+    def multi_agent_status(self) -> Dict[str, Any]:
+        """Telemetry snapshot of the Multi-Agent Trading Architecture."""
+        return {
+            "enabled": getattr(self, "enable_multi_agent", False),
+            "agents": [
+                self.market_scanner_agent.get_status(),
+                self.trend_agent.get_status(),
+                self.volatility_agent.get_status(),
+                self.pattern_agent.get_status(),
+                self.learning_agent.get_status(),
+                self.consensus_agent.get_status(),
+                self.risk_agent.get_status(),
+                self.execution_agent.get_status(),
+            ],
+            "weights": self.learning_agent.agent_stats,
+            "min_confidence": self.min_confidence,
+        }
+
     def stats_snapshot(self) -> Dict[str, Any]:
         snap = self.risk_manager.snapshot()
         return {
@@ -1405,6 +1665,7 @@ class TradingOrchestrator:
             "currency": self.client.get_currency(),
             "learning": self.learner.snapshot(),
             "min_confidence": self.min_confidence,
+            "multi_agent": self.multi_agent_status(),
         }
 
     def risk_status(self) -> Dict[str, Any]:
@@ -1438,7 +1699,9 @@ class TradingOrchestrator:
             "offer_gate": self.offer_gate.snapshot(),
             "deepseek": self.deepseek_advisor.snapshot(),
             "fx_minute_duration": preferred_minute_duration("frxEURUSD", self.minute_duration),
+            "multi_agent": self.multi_agent_status(),
         }
+
 
     def _open_trade_details(self) -> list:
         """Merge monitor + local meta + executor so the dashboard card stays filled."""

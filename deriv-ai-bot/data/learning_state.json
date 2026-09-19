@@ -1,0 +1,50 @@
+{
+  "stats": {
+    "R_100|CALL": {
+      "wins": 25,
+      "losses": 0,
+      "streak_loss": 0,
+      "streak_win": 25,
+      "pnl": 0.0,
+      "last_ts": 1789851476.8537152,
+      "conf_sum": 0.0,
+      "conf_n": 0,
+      "family": "",
+      "strength_history": [],
+      "profit_wins": 0.0,
+      "profit_losses": 0.0
+    },
+    "JD25|PUT": {
+      "wins": 1,
+      "losses": 0,
+      "streak_loss": 0,
+      "streak_win": 1,
+      "pnl": 0.91,
+      "last_ts": 1789653431.5607975,
+      "conf_sum": 0.0,
+      "conf_n": 0,
+      "family": "",
+      "strength_history": [],
+      "profit_wins": 0.91,
+      "profit_losses": 0.0
+    },
+    "JD10|PUT": {
+      "wins": 1,
+      "losses": 0,
+      "streak_loss": 0,
+      "streak_win": 1,
+      "pnl": 0.92,
+      "last_ts": 1789653528.6615071,
+      "conf_sum": 0.0,
+      "conf_n": 0,
+      "family": "",
+      "strength_history": [],
+      "profit_wins": 0.92,
+      "profit_losses": 0.0
+    }
+  },
+  "global_wins": 27,
+  "global_losses": 0,
+  "total_recorded": 27,
+  "updated_at": 1789851476.85407
+}

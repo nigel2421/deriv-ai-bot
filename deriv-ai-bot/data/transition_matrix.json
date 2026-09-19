@@ -1,0 +1,20 @@
+{
+  "JD25": {
+    "UP_UP": 0,
+    "UP_DOWN": 0,
+    "DOWN_UP": 0,
+    "DOWN_DOWN": 0,
+    "last_direction": "DOWN",
+    "last_ts": 1789653431.568519,
+    "total": 0
+  },
+  "JD10": {
+    "UP_UP": 0,
+    "UP_DOWN": 0,
+    "DOWN_UP": 0,
+    "DOWN_DOWN": 0,
+    "last_direction": "DOWN",
+    "last_ts": 1789653528.6691427,
+    "total": 0
+  }
+}

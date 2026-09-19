@@ -1,0 +1,26 @@
+{
+  "MarketScannerAgent": {
+    "weight": 1.0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": 0.5
+  },
+  "TrendAgent": {
+    "weight": 1.0,
+    "wins": 2,
+    "losses": 0,
+    "win_rate": 1.0
+  },
+  "VolatilityAgent": {
+    "weight": 1.0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": 0.5
+  },
+  "PatternAgent": {
+    "weight": 1.0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": 0.5
+  }
+}
