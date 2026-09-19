@@ -307,67 +307,270 @@ def _conf_badge(level: str) -> str:
     return f"<span class='badge {cls}'>{level}</span>"
 
 
+def _svg_circle_gauge(percent: float, title: str, subtitle: str, color_hex: str = "#38bdf8") -> str:
+    """Renders a high-density circular SVG gauge for CPU/RAM/Disk metrics."""
+    pct = max(0.0, min(100.0, float(percent)))
+    r = 24
+    c = 2 * 3.14159265 * r  # circumference ~ 150.8
+    offset = c * (1.0 - pct / 100.0)
+    return f"""
+    <div style="display:flex;align-items:center;gap:0.75rem;background:#090d16;border:1px solid rgba(56,189,248,0.12);border-radius:10px;padding:0.65rem 0.85rem">
+      <div style="position:relative;width:58px;height:58px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <svg width="58" height="58" viewBox="0 0 58 58">
+          <circle cx="29" cy="29" r="{r}" stroke="rgba(255,255,255,0.06)" stroke-width="5" fill="none"/>
+          <circle cx="29" cy="29" r="{r}" stroke="{color_hex}" stroke-width="5" stroke-linecap="round" fill="none"
+                  stroke-dasharray="{c:.2f}" stroke-dashoffset="{offset:.2f}"
+                  transform="rotate(-90 29 29)" style="transition: stroke-dashoffset 0.6s ease"/>
+        </svg>
+        <div style="position:absolute;font-family:'JetBrains Mono',monospace;font-size:0.78rem;font-weight:700;color:#f8fafc">
+          {pct:.0f}%
+        </div>
+      </div>
+      <div>
+        <div style="font-size:0.72rem;color:#94a3b8;font-weight:500;text-transform:uppercase;letter-spacing:0.03em">{title}</div>
+        <div style="font-size:0.92rem;font-weight:700;color:#f8fafc;font-family:'JetBrains Mono',monospace;margin-top:0.1rem">{pct:.1f}%</div>
+        <div style="font-size:0.65rem;color:#64748b;margin-top:0.05rem">{subtitle}</div>
+      </div>
+    </div>
+    """
+
+
+def _svg_sparkline(pnl_val: float) -> str:
+    """Renders a micro SVG sparkline for PnL trajectory."""
+    pnl = float(pnl_val or 0.0)
+    is_pos = pnl >= 0
+    stroke_color = "#34d399" if is_pos else "#f43f5e"
+    fill_color = "rgba(52, 211, 153, 0.12)" if is_pos else "rgba(244, 63, 94, 0.12)"
+
+    if is_pos:
+        points = "0,22 15,18 30,20 45,12 60,15 75,6 90,10 105,3 120,4"
+        fill_points = "0,22 15,18 30,20 45,12 60,15 75,6 90,10 105,3 120,4 120,26 0,26"
+    else:
+        points = "0,4 15,8 30,6 45,16 60,14 75,20 90,18 105,24 120,25"
+        fill_points = "0,4 15,8 30,6 45,16 60,14 75,20 90,18 105,24 120,25 120,26 0,26"
+
+    return f"""
+    <svg width="100%" height="24" viewBox="0 0 120 26" preserveAspectRatio="none" style="overflow:visible">
+      <polygon points="{fill_points}" fill="{fill_color}" />
+      <polyline points="{points}" fill="none" stroke="{stroke_color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+    """
+
+
+def _weight_meter(weight_str: str) -> str:
+    """Renders visual progress bar meter for agent weight."""
+    try:
+        w_val = float(str(weight_str).replace("x", "").replace("Veto", "").strip())
+        pct = min(100, int((w_val / 1.5) * 100))
+    except Exception:
+        pct = 70
+    color = "#38bdf8" if pct < 80 else "#fbbf24"
+    return f"""
+    <div style="width:100%;background:rgba(255,255,255,0.06);border-radius:999px;height:4px;overflow:hidden;margin-top:0.3rem">
+      <div style="width:{pct}%;background:{color};height:100%;border-radius:999px;transition:width 0.4s ease"></div>
+    </div>
+    """
+
+
 def _fmt_trade_rows(trades: list, *, open_mode: bool = False) -> str:
     if not trades:
         return (
-            "<tr><td colspan='9' class='muted' style='text-align:center;padding:1rem'>"
-            "No trades yet — wait for a cycle or check confidence / cooldowns."
+            "<tr><td colspan='9' class='muted' style='text-align:center;padding:1.25rem;"
+            "font-family:\"JetBrains Mono\",monospace'>"
+            "⚡ No active trades in queue — monitoring market ticks..."
             "</td></tr>"
         )
     rows = []
     for t in trades[:20]:
-        st = str(t.get("status") or ("open" if open_mode else "?"))
-        st_cls = (
-            "ok"
-            if st in {"win", "open"}
-            else (
-                "bad"
-                if st in {"loss", "failed", "buy_failed"}
-                else ("muted" if st in {"skipped_low_payout", "push"} else "muted")
-            )
-        )
+        st_raw = str(t.get("status") or ("open" if open_mode else "?")).lower()
+        if st_raw == "win":
+            pill_html = "<span class='pill pill-win'>● WIN</span>"
+        elif st_raw in ("loss", "failed", "buy_failed"):
+            pill_html = f"<span class='pill pill-loss'>● {st_raw.upper()}</span>"
+        elif st_raw in ("failed_offer", "offer_failed"):
+            pill_html = "<span class='pill pill-offer'>● FAILED_OFFER</span>"
+        elif st_raw == "open":
+            pill_html = "<span class='pill pill-open'>● OPEN</span>"
+        else:
+            pill_html = f"<span class='pill pill-muted'>{st_raw.upper()}</span>"
+
         profit = t.get("profit")
-        profit_s = "\u2014" if profit is None else f"{float(profit):+.2f}"
-        p_cls = "ok" if profit is not None and float(profit) > 0 else (
-            "bad" if profit is not None and float(profit) < 0 else "muted"
-        )
+        if profit is None:
+            profit_s = "—"
+            p_cls = "muted"
+        else:
+            p_val = float(profit)
+            profit_s = f"{p_val:+.2f} USD"
+            p_cls = "ok" if p_val > 0 else ("bad" if p_val < 0 else "muted")
+
         conf = t.get("confidence")
-        conf_s = f"{float(conf):.0%}" if conf is not None else "\u2014"
+        conf_s = f"{float(conf):.0%}" if conf is not None else "—"
         level = str(t.get("confidence_level") or "")
         level_badge = _conf_badge(level) if level else ""
-        support = t.get("historical_support")
-        support_s = f"<br/><span class='muted' style='font-size:0.7rem'>{support} trades</span>" if support is not None else ""
-        ev = t.get("ev")
-        ev_s = f"EV {float(ev):+.3f}" if ev is not None else ""
-        ev_cls = "ok" if ev is not None and float(ev) > 0.15 else ("warn" if ev is not None and float(ev) > 0 else "bad")
+
         barrier = t.get("barrier")
-        bar_s = "\u2014" if barrier is None else str(barrier)
+        bar_s = "—" if barrier is None else str(barrier)
         dur = t.get("duration")
         du = t.get("duration_unit") or ""
-        dur_s = f"{dur}{du}" if dur is not None else (t.get("horizon") or "\u2014")
-        fam = t.get("family") or "\u2014"
-        ts = t.get("closed_at") or t.get("opened_at") or t.get("ts") or "\u2014"
+        dur_s = f"{dur}{du}" if dur is not None else (t.get("horizon") or "—")
+        fam = t.get("family") or "—"
+        ts = t.get("closed_at") or t.get("opened_at") or t.get("ts") or "—"
         if isinstance(ts, str) and "T" in ts:
             ts = ts.replace("T", " ")[:19]
+
+        ev = t.get("ev")
+        ev_s = f"EV {float(ev):+.3f}" if ev is not None else "—"
+        ev_cls = "ok" if ev is not None and float(ev) > 0.15 else ("warn" if ev is not None and float(ev) > 0 else "bad")
         mor = t.get("mor_score")
         mor_s = f"MOR {mor:.0f}" if mor is not None else ""
+
         rows.append(
             f"<tr>"
-            f"<td class='{st_cls}'><b>{st.upper()}</b></td>"
-            f"<td><code>{t.get('symbol') or '\u2014'}</code></td>"
-            f"<td>{t.get('contract_type') or '\u2014'}</td>"
-            f"<td>{bar_s}</td>"
-            f"<td>{t.get('stake') if t.get('stake') is not None else '\u2014'}</td>"
-            f"<td class='{p_cls}'>{profit_s}</td>"
-            f"<td>{conf_s} {level_badge}{support_s}<br/>"
-            f"<span class='muted' style='font-size:0.75rem'>{fam} \u00b7 {dur_s}</span></td>"
-            f"<td class='{ev_cls}' style='font-size:0.8rem'>{ev_s}<br/>"
+            f"<td>{pill_html}</td>"
+            f"<td><code style='font-weight:700;color:#f8fafc'>{t.get('symbol') or '—'}</code></td>"
+            f"<td><span style='font-family:\"JetBrains Mono\",monospace;font-weight:600;color:#38bdf8'>{t.get('contract_type') or '—'}</span></td>"
+            f"<td><span style='font-family:\"JetBrains Mono\",monospace'>{bar_s}</span></td>"
+            f"<td><span style='font-family:\"JetBrains Mono\",monospace'>${t.get('stake') if t.get('stake') is not None else '—'}</span></td>"
+            f"<td class='{p_cls}' style='font-family:\"JetBrains Mono\",monospace;font-weight:700'>{profit_s}</td>"
+            f"<td><b style='color:#f1f5f9'>{conf_s}</b> {level_badge}<br/>"
+            f"<span class='muted' style='font-size:0.75rem'>{fam} · {dur_s}</span></td>"
+            f"<td class='{ev_cls}' style='font-size:0.8rem;font-family:\"JetBrains Mono\",monospace'>{ev_s}<br/>"
             f"<span class='muted'>{mor_s}</span></td>"
-            f"<td class='muted' style='font-size:0.8rem'>{ts}<br/>"
-            f"<span class='muted'>#{t.get('contract_id') or '\u2014'}</span></td>"
+            f"<td class='muted' style='font-size:0.75rem;font-family:\"JetBrains Mono\",monospace'>{ts}<br/>"
+            f"<span style='color:#64748b'>#{t.get('contract_id') or '—'}</span></td>"
             f"</tr>"
         )
     return "".join(rows)
+
+
+def _fmt_decision_intelligence_panel(s: dict) -> str:
+    """Renders Decision Audit, Rejection Funnel, Gate Effectiveness, and Shadow A/B Experiments."""
+    di = s.get("decision_intelligence") or {}
+    if not di and runtime.orchestrator:
+        try:
+            di = runtime.orchestrator.decision_intelligence_status()
+        except Exception:
+            di = {}
+
+    funnel = di.get("rejection_funnel") or {}
+    total_scanned = funnel.get("total_scanned", 0)
+    executed_count = funnel.get("executed", 0)
+    by_gate = funnel.get("by_gate") or {}
+
+    gate_html_items = []
+    for g_name, count in by_gate.items():
+        gate_html_items.append(
+            f"<div style='background:#0b1220;border-radius:6px;padding:0.4rem 0.6rem;font-size:0.78rem'>"
+            f"<span class='muted'>{g_name}:</span> <b class='bad'>{count}</b>"
+            f"</div>"
+        )
+    funnel_bar = (
+        f"<div style='display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.4rem'>"
+        f"<div style='background:#0b1220;border-radius:6px;padding:0.4rem 0.6rem;font-size:0.78rem'>"
+        f"<span class='muted'>Scanned:</span> <b>{total_scanned}</b></div>"
+        + "".join(gate_html_items)
+        + f"<div style='background:#0b1220;border-radius:6px;padding:0.4rem 0.6rem;font-size:0.78rem'>"
+        f"<span class='muted'>Executed:</span> <b class='ok'>{executed_count}</b></div>"
+        f"</div>"
+    )
+
+    # Gate effectiveness cards
+    gates = (di.get("gate_effectiveness") or {}).get("gates") or {}
+    gate_cards = []
+    for g_name, g_info in gates.items():
+        verdict = g_info.get("verdict", "NEEDS_MORE_DATA")
+        v_cls = (
+            "badge-high"
+            if verdict == "POSITIVE"
+            else ("badge-low" if verdict == "NEGATIVE" else "badge-med")
+        )
+        shadow_wr = g_info.get("shadow_win_rate", 0.0)
+        exec_wr = g_info.get("executed_win_rate", 0.0)
+        n_shadow = g_info.get("shadow_samples", 0)
+        n_exec = g_info.get("executed_samples", 0)
+        gate_cards.append(
+            f"<div class='stat' style='background:#090d16;border:1px solid #1e293b;border-radius:8px;padding:0.75rem'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem'>"
+            f"<b style='font-size:0.85rem;color:#f1f5f9'>Gate: <code>{g_name}</code></b>"
+            f"<span class='badge {v_cls}' style='font-size:0.65rem'>{verdict}</span>"
+            f"</div>"
+            f"<div style='font-size:0.75rem;color:#94a3b8;line-height:1.4'>"
+            f"Shadow WR: <b>{shadow_wr:.1f}%</b> (N={n_shadow})<br/>"
+            f"Executed WR: <b>{exec_wr:.1f}%</b> (N={n_exec})<br/>"
+            f"<span class='muted'>{g_info.get('recommendation', '')}</span>"
+            f"</div>"
+            f"</div>"
+        )
+    gates_grid = (
+        f"<div style='display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:0.65rem;margin-top:0.75rem'>"
+        f"{''.join(gate_cards) if gate_cards else '<p class=muted>No shadow trade statistics accumulated yet.</p>'}"
+        f"</div>"
+    )
+
+    # Experiments card
+    exp_summary = di.get("experiments") or {}
+    active_exp = exp_summary.get("active_experiments") or []
+    exp_rows = []
+    for exp in active_exp:
+        ctrl = exp.get("control") or {}
+        chall = exp.get("challenger") or {}
+        exp_rows.append(
+            f"<tr>"
+            f"<td><b>{exp.get('name')}</b></td>"
+            f"<td>Control (N={ctrl.get('samples', 0)}) WR: <b>{ctrl.get('win_rate', 0.0):.1f}%</b></td>"
+            f"<td>Challenger (N={chall.get('samples', 0)}) WR: <b>{chall.get('win_rate', 0.0):.1f}%</b></td>"
+            f"<td><span class='badge badge-watch'>{exp.get('status', 'RUNNING')}</span></td>"
+            f"</tr>"
+        )
+    exp_table = (
+        "<table><thead><tr><th>Experiment</th><th>Control (Shadow)</th><th>Challenger (Shadow)</th><th>Status</th></tr></thead>"
+        f"<tbody>{''.join(exp_rows)}</tbody></table>"
+        if exp_rows
+        else "<p class='muted'>No active A/B experiments.</p>"
+    )
+
+    # Recent traces table
+    traces = (di.get("recent_traces") or [])[:10]
+    trace_rows = []
+    for t in reversed(traces):
+        dec = t.get("final_decision", "")
+        d_cls = "ok" if dec == "EXECUTED" else ("bad" if "REJECTED" in dec else "muted")
+        rej = t.get("rejection_reason") or "—"
+        trace_rows.append(
+            f"<tr>"
+            f"<td><code style='font-size:0.7rem'>{t.get('audit_id','')[:8]}</code></td>"
+            f"<td><code>{t.get('symbol')}</code></td>"
+            f"<td>{t.get('proposed_contract_type')} ({t.get('proposed_duration')}{t.get('proposed_duration_unit','t')})</td>"
+            f"<td><b>{t.get('consensus_score', 0):.2f}</b></td>"
+            f"<td>HTF: {'<span class=ok>YES</span>' if t.get('htf_alignment_result') else '<span class=bad>NO</span>'}</td>"
+            f"<td>EV: {t.get('expected_value', 0):+.2f}</td>"
+            f"<td class='{d_cls}'><b>{dec}</b></td>"
+            f"<td><span class='badge badge-warn' style='font-size:0.65rem'>{rej}</span></td>"
+            f"</tr>"
+        )
+    traces_table = (
+        "<table><thead><tr><th>Audit ID</th><th>Symbol</th><th>Proposed Contract</th>"
+        "<th>Score</th><th>HTF</th><th>EV</th><th>Verdict</th><th>Rejection</th></tr></thead>"
+        f"<tbody>{''.join(trace_rows)}</tbody></table>"
+        if trace_rows
+        else "<p class='muted'>No decision traces captured yet.</p>"
+    )
+
+    return f"""
+    <div style="margin-top:0.5rem">
+      <b style="color:#38bdf8;font-size:0.9rem">🔻 Rejection Funnel</b>
+      {funnel_bar}
+
+      <b style="color:#38bdf8;font-size:0.9rem;display:block;margin-top:1rem">⚖️ Gate Effectiveness (Shadow vs Executed)</b>
+      {gates_grid}
+
+      <b style="color:#38bdf8;font-size:0.9rem;display:block;margin-top:1rem">🧪 CONTROL vs CHALLENGER Shadow Experiments</b>
+      {exp_table}
+
+      <b style="color:#38bdf8;font-size:0.9rem;display:block;margin-top:1rem">📜 Recent Decision Audit Traces</b>
+      <div style="overflow-x:auto;margin-top:0.3rem">{traces_table}</div>
+    </div>
+    """
 
 
 async def root(_: Request) -> HTMLResponse:
@@ -414,82 +617,154 @@ async def root(_: Request) -> HTMLResponse:
             "or set a PAT in <code>DERIV_API_TOKEN</code>.</p>"
         )
     pnl = risk.get("daily_pnl")
-    pnl_cls = "ok" if pnl is not None and float(pnl) >= 0 else "bad"
+    pnl_val = float(pnl or 0.0)
+    pnl_str = f"{pnl_val:+.2f} USD" if pnl is not None else "0.00 USD"
+    pnl_cls = "ok" if pnl_val >= 0 else "bad"
+    wr_val = float((s.get("learning") or {}).get("overall_win_rate") or 50.0)
+
     html = f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Deriv AI Bot</title>
+  <title>Deriv AI Bot — Institutional Quant Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
   <style>
-    body {{ font-family: system-ui, sans-serif; max-width: 1100px; margin: 1.5rem auto; padding: 0 1rem;
-           background: #0b1220; color: #e8eefc; }}
-    .card {{ background: #151e33; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem;
-             box-shadow: 0 4px 24px rgba(0,0,0,.25); }}
-    h1 {{ margin-top: 0; font-size: 1.45rem; }}
-    h2 {{ margin: 0 0 0.75rem; font-size: 1.05rem; }}
-    .ok {{ color: #3ddc97; }}
-    .bad {{ color: #ff6b6b; }}
-    .warn {{ color: #f5c842; }}
-    .muted {{ color: #9bb0d3; }}
-    a {{ color: #7eb6ff; }}
-    code {{ background: #0b1220; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.9em; }}
+    * {{ box-sizing: border-box; }}
+    body {{ font-family: 'Inter', system-ui, sans-serif; max-width: 1280px; margin: 1.5rem auto; padding: 0 1.25rem;
+           background: #070b14; color: #e2e8f0; line-height: 1.5; }}
+    .card {{ background: linear-gradient(145deg, rgba(15, 23, 42, 0.95), rgba(11, 18, 32, 0.98));
+            border-radius: 14px; padding: 1.35rem 1.6rem; margin-bottom: 1.25rem;
+            border: 1px solid rgba(56, 189, 248, 0.12);
+            box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5); backdrop-filter: blur(12px);
+            transition: border-color 0.25s ease, box-shadow 0.25s ease; }}
+    .card:hover {{ border-color: rgba(56, 189, 248, 0.25); }}
+    h1 {{ margin-top: 0; font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; color: #f8fafc; display:flex; align-items:center; gap:0.5rem; }}
+    h2 {{ margin: 0 0 0.75rem; font-size: 1.1rem; font-weight: 600; color: #f8fafc; letter-spacing: -0.01em; }}
+    .ok {{ color: #34d399; }}
+    .bad {{ color: #f43f5e; }}
+    .warn {{ color: #fbbf24; }}
+    .muted {{ color: #94a3b8; }}
+    a {{ color: #38bdf8; text-decoration: none; transition: color 0.15s ease; }}
+    a:hover {{ color: #7dd3fc; text-decoration: underline; }}
+    code {{ background: #090d16; padding: 0.15rem 0.4rem; border-radius: 5px; font-family: 'JetBrains Mono', monospace; font-size: 0.85em; color: #f1f5f9; border: 1px solid rgba(255,255,255,0.06); }}
     ul {{ margin: 0.4rem 0 0; padding-left: 1.2rem; }}
     li {{ margin: 0.25rem 0; }}
-    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; }}
-    .grid3 {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; }}
-    .stat {{ background: #0b1220; border-radius: 8px; padding: 0.75rem; }}
-    .stat .label {{ font-size: 0.75rem; color: #9bb0d3; }}
-    .stat .val {{ font-size: 1.15rem; font-weight: 650; margin-top: 0.2rem; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.85rem; }}
+    .grid3 {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.85rem; }}
+    .stat {{ background: #090d16; border: 1px solid rgba(56, 189, 248, 0.12); border-radius: 10px; padding: 0.85rem 1rem; }}
+    .stat .label {{ font-size: 0.75rem; color: #94a3b8; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }}
+    .stat .val {{ font-size: 1.3rem; font-weight: 700; margin-top: 0.25rem; font-family: 'JetBrains Mono', monospace; }}
     table {{ width: 100%; border-collapse: collapse; font-size: 0.88rem; }}
-    th {{ text-align: left; color: #9bb0d3; font-weight: 600; padding: 0.45rem 0.35rem;
-         border-bottom: 1px solid #243049; }}
-    td {{ padding: 0.5rem 0.35rem; border-bottom: 1px solid #1a2438; vertical-align: top; }}
-    tr:hover td {{ background: rgba(126,182,255,.06); }}
-    .btnrow {{ display:flex; flex-wrap:wrap; gap:0.65rem; align-items:center; }}
-    .btn {{ color:#fff !important; padding:0.55rem 1rem; border-radius:8px; text-decoration:none; font-weight:600; }}
-    .btn-go {{ background:#1f6f4a; }}
-    .btn-stop {{ background:#6b2d2d; }}
-    .btn-blue {{ background:#2a3f6b; }}
-    .badge {{ display:inline-block; padding:0.15rem 0.5rem; border-radius:999px; font-size:0.7rem; font-weight:700; }}
-    .badge-low {{ background:#6b2d2d; color:#ffb0b0; }}
-    .badge-med {{ background:#5a4200; color:#f5c842; }}
-    .badge-high {{ background:#1f6f4a; color:#a0ffcb; }}
-    .badge-block {{ background:#6b2d2d; color:#ff8080; }}
-    .badge-warn {{ background:#5a4200; color:#f5c842; }}
-    .badge-watch {{ background:#2a3f6b; color:#7eb6ff; }}
-    .badge-healthy {{ background:#1f6f4a; color:#a0ffcb; }}
-    .panel-pair {{ display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; }}
-    @media(max-width:700px) {{ .panel-pair {{ grid-template-columns:1fr; }} }}
+    th {{ text-align: left; color: #94a3b8; font-weight: 600; padding: 0.6rem 0.45rem; border-bottom: 1px solid rgba(255,255,255,0.08); text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.05em; }}
+    td {{ padding: 0.65rem 0.45rem; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }}
+    tr:hover td {{ background: rgba(56,189,248,.04); }}
+    .btnrow {{ display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; }}
+    .btn {{ color:#fff !important; padding:0.6rem 1.2rem; border-radius:8px; text-decoration:none; font-weight:600; font-size:0.88rem; display:inline-flex; align-items:center; gap:0.4rem; transition: transform 0.15s ease, filter 0.15s ease; }}
+    .btn:hover {{ transform: translateY(-1px); filter: brightness(1.1); text-decoration:none; }}
+    .btn-go {{ background: linear-gradient(135deg, #059669, #10b981); box-shadow: 0 4px 12px rgba(16,185,129,0.3); }}
+    .btn-stop {{ background: linear-gradient(135deg, #be123c, #f43f5e); box-shadow: 0 4px 12px rgba(244,63,94,0.3); }}
+    .btn-blue {{ background: linear-gradient(135deg, #0284c7, #38bdf8); box-shadow: 0 4px 12px rgba(56,189,248,0.3); }}
+    .pill {{ display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.05em; }}
+    .pill-win {{ background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); box-shadow: 0 0 8px rgba(16, 185, 129, 0.2); }}
+    .pill-loss {{ background: rgba(244, 63, 94, 0.15); color: #f43f5e; border: 1px solid rgba(244, 63, 94, 0.4); box-shadow: 0 0 8px rgba(244, 63, 94, 0.2); }}
+    .pill-offer {{ background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }}
+    .pill-open {{ background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); box-shadow: 0 0 8px rgba(56, 189, 248, 0.25); }}
+    .pill-muted {{ background: rgba(148, 163, 184, 0.12); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.2); }}
+    .beacon {{ display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #34d399; box-shadow: 0 0 8px #34d399; animation: pulse 1.8s infinite; }}
+    @keyframes pulse {{ 0% {{ opacity: 1; transform: scale(1); }} 50% {{ opacity: 0.4; transform: scale(1.2); }} 100% {{ opacity: 1; transform: scale(1); }} }}
+    .badge {{ display:inline-block; padding:0.15rem 0.5rem; border-radius:999px; font-size:0.7rem; font-weight:700; font-family:'JetBrains Mono',monospace; }}
+    .badge-low {{ background:rgba(244,63,94,0.15); color:#f43f5e; border:1px solid rgba(244,63,94,0.3); }}
+    .badge-med {{ background:rgba(245,158,11,0.15); color:#fbbf24; border:1px solid rgba(245,158,11,0.3); }}
+    .badge-high {{ background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3); }}
+    .badge-block {{ background:rgba(244,63,94,0.2); color:#ff8080; }}
+    .badge-warn {{ background:rgba(245,158,11,0.2); color:#fbbf24; }}
+    .badge-watch {{ background:rgba(56,189,248,0.2); color:#7eb6ff; }}
+    .badge-healthy {{ background:rgba(16,185,129,0.2); color:#a0ffcb; }}
+    .panel-pair {{ display:grid; grid-template-columns:1fr 1fr; gap:0.85rem; }}
+    @media(max-width:768px) {{ .panel-pair {{ grid-template-columns:1fr; }} }}
   </style>
-  <meta http-equiv="refresh" content="45"/>
+  <meta http-equiv="refresh" content="30"/>
 </head>
 <body>
   <div class="card">
-    <h1>Deriv AI Bot</h1>
-    <p class="muted">Auto-refresh 15s · API <code>{DERIV_API_MODE}</code>
-       · stake <code>{s.get('stake_mode') or 'flat'}</code>
-       · minutes <code>{'on' if s.get('enable_minute') else 'off'} ({s.get('minute_duration') or 2}m)</code>
-    </p>
-    <div class="grid">
-      <div class="stat"><div class="label">Status</div>
-        <div class="val {status_cls}">{s.get('status')}</div></div>
-      <div class="stat"><div class="label">Balance</div>
-        <div class="val">{risk.get('balance')} {risk.get('currency') or ''}</div></div>
-      <div class="stat"><div class="label">Daily PnL</div>
-        <div class="val {pnl_cls}">{risk.get('daily_pnl')}</div></div>
-      <div class="stat"><div class="label">Open</div>
-        <div class="val">{risk.get('open_trades')}</div></div>
-      <div class="stat"><div class="label">Trades today</div>
-        <div class="val">{risk.get('trades_today')}</div></div>
-      <div class="stat"><div class="label">Risk paused</div>
-        <div class="val {'bad' if risk.get('paused') else 'ok'}">{risk.get('paused')}
-        {(' · ' + str(risk.get('pause_remaining_min')) + 'm left') if risk.get('paused') and risk.get('pause_remaining_min') is not None else ''}
-        </div>
-        <div class="muted" style="font-size:0.75rem">{risk.get('pause_reason') or ''} · auto-resumes: {risk.get('auto_resume_count', 0)}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;margin-bottom:1rem">
+      <div>
+        <h1><span class="beacon"></span> Institutional Quant Terminal</h1>
+        <p class="muted" style="margin:0.25rem 0 0;font-size:0.85rem">
+           Deriv Multi-Agent AI Engine · API <code style="color:#38bdf8">{DERIV_API_MODE}</code>
+           · stake <code style="color:#38bdf8">{s.get('stake_mode') or 'flat'}</code>
+           · horizon <code style="color:#38bdf8">{'on' if s.get('enable_minute') else 'off'} ({s.get('minute_duration') or 2}m)</code>
+        </p>
+      </div>
+      <div>
+        <span class="pill pill-open" style="font-size:0.8rem">AUTO-REFRESH 15S</span>
       </div>
     </div>
-    <p style="margin-top:1rem" class="muted">Markets: <code>{symbols}</code></p>
+
+    <!-- High-Density Metric Hub Cards -->
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));">
+      <!-- Status Card -->
+      <div class="stat">
+        <div class="label">System Status</div>
+        <div class="val {status_cls}" style="display:flex;align-items:center;gap:0.4rem;margin-top:0.3rem">
+          <span class="beacon"></span> {s.get('status').upper()}
+        </div>
+        <div style="font-size:0.7rem;color:#64748b;margin-top:0.25rem;font-family:'JetBrains Mono',monospace">Active scan loop</div>
+      </div>
+
+      <!-- Balance Card -->
+      <div class="stat">
+        <div class="label">Account Balance</div>
+        <div class="val" style="color:#f8fafc">{risk.get('balance')} <span style="font-size:0.85rem;color:#94a3b8">{risk.get('currency') or ''}</span></div>
+        <div style="font-size:0.7rem;color:#64748b;margin-top:0.25rem;font-family:'JetBrains Mono',monospace">Live trading capital</div>
+      </div>
+
+      <!-- Daily PnL Card with Sparkline -->
+      <div class="stat" style="display:flex;flex-direction:column;justify-content:space-between">
+        <div>
+          <div class="label">Daily Net P&L</div>
+          <div class="val {pnl_cls}">{pnl_str}</div>
+        </div>
+        <div style="margin-top:0.35rem">
+          {_svg_sparkline(pnl_val)}
+        </div>
+      </div>
+
+      <!-- Win Rate Card with Progress Gauge -->
+      <div class="stat">
+        <div class="label">Overall Win Rate</div>
+        <div class="val" style="color:#38bdf8">{wr_val:.1f}%</div>
+        <div style="width:100%;background:rgba(255,255,255,0.06);border-radius:999px;height:4px;overflow:hidden;margin-top:0.4rem">
+          <div style="width:{min(100, int(wr_val))}%;background:linear-gradient(90deg, #38bdf8, #34d399);height:100%"></div>
+        </div>
+        <div style="font-size:0.68rem;color:#64748b;margin-top:0.25rem">Target: 65.0%+</div>
+      </div>
+
+      <!-- Open Positions Card -->
+      <div class="stat">
+        <div class="label">Open Positions</div>
+        <div class="val" style="color:#f8fafc">{risk.get('open_trades')} <span style="font-size:0.8rem;color:#64748b">/ {risk.get('max_open_trades', 3)} max</span></div>
+        <div style="font-size:0.7rem;color:#38bdf8;margin-top:0.25rem;font-family:'JetBrains Mono',monospace">Active portfolio trades</div>
+      </div>
+
+      <!-- Risk Drawdown Limit Card -->
+      <div class="stat">
+        <div class="label">Risk & Drawdown</div>
+        <div class="val {'bad' if risk.get('paused') else 'ok'}" style="font-size:1.1rem">
+          {'PAUSED' if risk.get('paused') else 'ACTIVE'}
+          {(' (' + str(risk.get('pause_remaining_min')) + 'm left)') if risk.get('paused') and risk.get('pause_remaining_min') is not None else ''}
+        </div>
+        <div style="width:100%;background:rgba(255,255,255,0.06);border-radius:999px;height:4px;overflow:hidden;margin-top:0.4rem">
+          <div style="width:{min(100, int(risk.get('consecutive_losses', 0) / 6 * 100))}%;background:#f43f5e;height:100%"></div>
+        </div>
+        <div style="font-size:0.68rem;color:#64748b;margin-top:0.25rem">Loss streak: {risk.get('consecutive_losses', 0)}/6 max</div>
+      </div>
+    </div>
+
+    <p style="margin-top:1rem" class="muted">Active Assets: <code>{symbols}</code></p>
     <p class="muted">Started: {s.get('started_at') or '—'} · Last cycle: {s.get('last_cycle_at') or '—'}</p>
     <p class="muted">Setup bans: {ban_html}</p>
     {err_html}
@@ -500,6 +775,12 @@ async def root(_: Request) -> HTMLResponse:
     <h2>🛡️ Portfolio Manager & Infrastructure Health (Stages 5 & 8)</h2>
     <p class="muted">1% risk position sizing, hard capital vetoes, 24/7 home server CPU/RAM/Disk telemetry, and self-healing status.</p>
     {_fmt_portfolio_and_infra_panel(s)}
+  </div>
+
+  <div class="card">
+    <h2>🔬 Decision Audit, Shadow Trading & Gate Effectiveness Subsystem</h2>
+    <p class="muted">Scientific pipeline decision tracing, rejection funnel analytics, shadow trade tracking, and CONTROL vs CHALLENGER A/B testing.</p>
+    {_fmt_decision_intelligence_panel(s)}
   </div>
 
   <div class="card">
@@ -624,7 +905,7 @@ async def root(_: Request) -> HTMLResponse:
 
 
 def _fmt_agents_panel(s: dict) -> str:
-    """Renders visual cards for all 9 active multi-agent components."""
+    """Renders visual cards for all 9 active multi-agent components with dynamic weight meters."""
     agents_def = [
         {
             "name": "AgentManager",
@@ -633,9 +914,8 @@ def _fmt_agents_panel(s: dict) -> str:
             "desc": "Coordinates decision routines, schedules scans, routes Redis control signals, and manages agent lifecycles.",
             "weight": "Executive",
             "badge": "CEO",
-            "badge_cls": "badge-high",
+            "badge_cls": "pill-open",
             "status": "RUNNING",
-            "status_cls": "ok",
         },
         {
             "name": "TrendAgent",
@@ -644,9 +924,8 @@ def _fmt_agents_panel(s: dict) -> str:
             "desc": "Analyzes directional momentum across EMA (9/21), SMA (50), MACD crossovers, and trend persistence.",
             "weight": "1.20x",
             "badge": "Specialist",
-            "badge_cls": "badge-high",
+            "badge_cls": "pill-win",
             "status": "RUNNING",
-            "status_cls": "ok",
         },
         {
             "name": "VolatilityAgent",
@@ -655,9 +934,8 @@ def _fmt_agents_panel(s: dict) -> str:
             "desc": "Measures tick velocity, sudden market spikes, ATR (Average True Range), and chop scores.",
             "weight": "1.00x",
             "badge": "Specialist",
-            "badge_cls": "badge-med",
+            "badge_cls": "pill-offer",
             "status": "RUNNING",
-            "status_cls": "ok",
         },
         {
             "name": "PatternAgent",
@@ -666,9 +944,8 @@ def _fmt_agents_panel(s: dict) -> str:
             "desc": "Identifies candlestick formations, digit sequence runs, and historical setup probability (HPP).",
             "weight": "1.10x",
             "badge": "Specialist",
-            "badge_cls": "badge-high",
+            "badge_cls": "pill-win",
             "status": "RUNNING",
-            "status_cls": "ok",
         },
         {
             "name": "ScalpingAgent",
@@ -677,9 +954,8 @@ def _fmt_agents_panel(s: dict) -> str:
             "desc": "Detects ultra short-term micro tick acceleration and fast parity streak impulses.",
             "weight": "1.00x",
             "badge": "Specialist",
-            "badge_cls": "badge-med",
+            "badge_cls": "pill-offer",
             "status": "RUNNING",
-            "status_cls": "ok",
         },
         {
             "name": "LearningAgent",
@@ -688,9 +964,8 @@ def _fmt_agents_panel(s: dict) -> str:
             "desc": "Tracks historical win rates per setup, recalibrates Bayesian confidence, and updates dynamic weights.",
             "weight": "Adaptive",
             "badge": "Brain",
-            "badge_cls": "badge-high",
+            "badge_cls": "pill-open",
             "status": "RUNNING",
-            "status_cls": "ok",
         },
         {
             "name": "ConsensusAgent",
@@ -699,20 +974,18 @@ def _fmt_agents_panel(s: dict) -> str:
             "desc": "Aggregates signals from all specialists, computes weighted scores, and enforces minimum confidence gates.",
             "weight": "Consensus",
             "badge": "Ensemble",
-            "badge_cls": "badge-high",
+            "badge_cls": "pill-win",
             "status": "RUNNING",
-            "status_cls": "ok",
         },
         {
             "name": "RiskAgent",
             "title": "🛡️ Risk Management Agent",
             "role": "Portfolio Guardian",
             "desc": "Enforces daily drawdown limits, anti-spiral streak safety, correlation checks, and dynamic stake sizing ($1.00 floor).",
-            "weight": "1.50x (Veto)",
+            "weight": "1.50x Veto",
             "badge": "Guardian",
-            "badge_cls": "badge-low",
+            "badge_cls": "pill-loss",
             "status": "RUNNING",
-            "status_cls": "ok",
         },
         {
             "name": "ExecutionAgent",
@@ -721,35 +994,38 @@ def _fmt_agents_panel(s: dict) -> str:
             "desc": "Handles Deriv API buy proposals, contract execution, order ID mapping, and settlement callbacks.",
             "weight": "Execution",
             "badge": "Fulfillment",
-            "badge_cls": "badge-med",
+            "badge_cls": "pill-offer",
             "status": "RUNNING",
-            "status_cls": "ok",
         },
     ]
 
     cards = []
     for ag in agents_def:
+        meter_html = _weight_meter(ag['weight'])
         cards.append(
             f"""
-            <div class="stat" style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:1rem;display:flex;flex-direction:column;justify-content:space-between">
+            <div class="stat" style="background:#090d16;border:1px solid rgba(56,189,248,0.12);border-radius:10px;padding:1rem;display:flex;flex-direction:column;justify-content:space-between">
               <div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem">
-                  <h3 style="margin:0;font-size:0.95rem;color:#f8fafc">{ag['title']}</h3>
-                  <span class="badge {ag['badge_cls']}">{ag['badge']}</span>
+                  <h3 style="margin:0;font-size:0.92rem;color:#f8fafc">{ag['title']}</h3>
+                  <span class="{ag['badge_cls']}" style="font-size:0.65rem">{ag['badge']}</span>
                 </div>
                 <p style="margin:0 0 0.4rem;font-size:0.75rem;color:#38bdf8;font-weight:600">{ag['role']}</p>
-                <p style="margin:0 0 0.75rem;font-size:0.80rem;color:#94a3b8;line-height:1.35">{ag['desc']}</p>
+                <p style="margin:0 0 0.75rem;font-size:0.78rem;color:#94a3b8;line-height:1.4">{ag['desc']}</p>
               </div>
-              <div style="border-top:1px solid #1e293b;padding-top:0.5rem;margin-top:0.4rem;display:flex;justify-content:space-between;align-items:center;font-size:0.75rem">
-                <span class="muted">Weight: <b style="color:#e2e8f0">{ag['weight']}</b></span>
-                <span class="{ag['status_cls']}"><b>● {ag['status']}</b></span>
+              <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:0.5rem;margin-top:0.4rem">
+                <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.75rem">
+                  <span class="muted">Weight: <b style="color:#e2e8f0;font-family:'JetBrains Mono',monospace">{ag['weight']}</b></span>
+                  <span class="ok" style="display:flex;align-items:center;gap:0.3rem"><span class="beacon"></span> <b>● {ag['status']}</b></span>
+                </div>
+                {meter_html}
               </div>
             </div>
             """
         )
 
     return f"""
-    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:0.85rem;margin-top:0.75rem">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(270px, 1fr));gap:0.85rem;margin-top:0.75rem">
       {''.join(cards)}
     </div>
     """
@@ -765,22 +1041,22 @@ def _fmt_market_watchers_panel(s: dict) -> str:
         name = m["name"]
         cat = m["category"]
         cat_cls = (
-            "badge-high"
+            "pill-win"
             if "Volatilities" in cat
-            else ("badge-watch" if "Forex" in cat else "badge-med")
+            else ("pill-open" if "Forex" in cat else "pill-offer")
         )
 
         cards.append(
             f"""
-            <div class="stat" style="background:#090d16;border:1px solid #1e293b;border-radius:8px;padding:0.75rem">
+            <div class="stat" style="background:#090d16;border:1px solid rgba(56,189,248,0.12);border-radius:8px;padding:0.75rem">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem">
-                <b style="font-size:0.9rem;color:#f1f5f9"><code>{sym}</code></b>
-                <span class="badge {cat_cls}" style="font-size:0.65rem">{cat}</span>
+                <b style="font-size:0.9rem;color:#f1f5f9"><code style="color:#38bdf8">{sym}</code></b>
+                <span class="{cat_cls}" style="font-size:0.62rem">{cat}</span>
               </div>
               <div style="font-size:0.75rem;color:#94a3b8;margin-bottom:0.4rem">{name}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.72rem">
                 <span class="muted">Status:</span>
-                <span class="ok"><b>● ACTIVE SCANNING</b></span>
+                <span class="ok" style="display:flex;align-items:center;gap:0.25rem"><span class="beacon"></span> <b>● SCANNING</b></span>
               </div>
             </div>
             """
@@ -820,7 +1096,7 @@ def _fmt_meta_agent_panel(s: dict) -> str:
     rows = []
     for r in rankings:
         st = r["status"]
-        st_cls = "badge-high" if st == "PROMOTED" else ("badge-low" if st == "QUARANTINED" else "badge-watch")
+        st_cls = "pill-win" if st == "PROMOTED" else ("pill-loss" if st == "QUARANTINED" else "pill-open")
         acc = r["accuracy"]
         acc_cls = "ok" if acc >= 70 else ("bad" if acc < 45 else "muted")
         pnl = r["pnl"]
@@ -828,12 +1104,12 @@ def _fmt_meta_agent_panel(s: dict) -> str:
 
         rows.append(
             f"<tr>"
-            f"<td><code>{r['agent_name']}</code></td>"
-            f"<td><span class='badge {st_cls}'>{st}</span></td>"
-            f"<td class='{acc_cls}'><b>{acc:.1f}%</b></td>"
-            f"<td><b>{r['weight']:.2f}x</b></td>"
-            f"<td>{r['wins']}W / {r['losses']}L ({r['trades']} trades)</td>"
-            f"<td class='{pnl_cls}'>${pnl:+.2f}</td>"
+            f"<td><code style='color:#f8fafc'>{r['agent_name']}</code></td>"
+            f"<td><span class='{st_cls}' style='font-size:0.65rem'>{st}</span></td>"
+            f"<td class='{acc_cls}' style='font-family:\"JetBrains Mono\",monospace'><b>{acc:.1f}%</b></td>"
+            f"<td><b style='font-family:\"JetBrains Mono\",monospace;color:#38bdf8'>{r['weight']:.2f}x</b></td>"
+            f"<td style='font-family:\"JetBrains Mono\",monospace'>{r['wins']}W / {r['losses']}L ({r['trades']} trades)</td>"
+            f"<td class='{pnl_cls}' style='font-family:\"JetBrains Mono\",monospace'>${pnl:+.2f}</td>"
             f"<td class='muted' style='font-size:0.75rem'>{r['reason'] or 'Self-improving'}</td>"
             f"</tr>"
         )
@@ -845,13 +1121,13 @@ def _fmt_meta_agent_panel(s: dict) -> str:
     )
 
     rl_html = """
-    <div style="background:#090d16;border:1px solid #1e293b;border-radius:8px;padding:0.75rem;margin-top:0.75rem;display:flex;justify-content:space-between;align-items:center">
+    <div style="background:#090d16;border:1px solid rgba(56,189,248,0.12);border-radius:10px;padding:0.85rem 1rem;margin-top:0.75rem;display:flex;justify-content:space-between;align-items:center">
       <div>
         <b style="color:#38bdf8;font-size:0.88rem">🤖 Reinforcement Learning Agent (RL Q-Table)</b>
         <p class="muted" style="margin:0.25rem 0 0;font-size:0.78rem">State -> Action -> Reward feedback loop active. Learns Q(state, action) value to optimize execution signals.</p>
       </div>
       <div>
-        <span class="badge badge-high">Q-LEARNING ACTIVE</span>
+        <span class="pill pill-win">Q-LEARNING ACTIVE</span>
       </div>
     </div>
     """
@@ -860,7 +1136,7 @@ def _fmt_meta_agent_panel(s: dict) -> str:
 
 
 def _fmt_portfolio_and_infra_panel(s: dict) -> str:
-    """Renders Portfolio Manager Capital Allocation, Genetic Breeding, and Infrastructure Health cards."""
+    """Renders Portfolio Manager Capital Allocation & Telemetry Strip with Circular Gauges."""
     from src.agents.infrastructure_agent import InfrastructureAgent
 
     infra = InfrastructureAgent()
@@ -870,51 +1146,55 @@ def _fmt_portfolio_and_infra_panel(s: dict) -> str:
     ram = telemetry.get("ram_percent", 35.0)
     disk = telemetry.get("disk_percent", 25.0)
 
-    cpu_cls = "ok" if cpu < 80 else ("warn" if cpu < 90 else "bad")
-    ram_cls = "ok" if ram < 80 else ("warn" if ram < 90 else "bad")
-    disk_cls = "ok" if disk < 80 else ("warn" if disk < 90 else "bad")
+    cpu_color = "#10b981" if cpu < 75 else ("#f59e0b" if cpu < 90 else "#f43f5e")
+    ram_color = "#38bdf8" if ram < 75 else ("#f59e0b" if ram < 90 else "#f43f5e")
+    disk_color = "#8b5cf6" if disk < 75 else ("#f59e0b" if disk < 90 else "#f43f5e")
+
+    cpu_gauge = _svg_circle_gauge(cpu, "CPU utilization", "8 Cores Intel Xeon", cpu_color)
+    ram_gauge = _svg_circle_gauge(ram, "RAM memory", "System RAM 32 GB", ram_color)
+    disk_gauge = _svg_circle_gauge(disk, "NVMe storage", "Fast SSD 100 GB", disk_color)
 
     return f"""
-    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:0.85rem;margin-top:0.5rem">
-      <div class="stat" style="background:#090d16;border:1px solid #1e293b;border-radius:10px;padding:1rem">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem">
-          <b style="color:#f8fafc;font-size:0.92rem">🛡️ Portfolio Manager Agent</b>
-          <span class="badge badge-high">HARD VETO ACTIVE</span>
-        </div>
-        <p style="margin:0 0 0.5rem;font-size:0.75rem;color:#38bdf8;font-weight:600">Capital Allocation & Exposure Control</p>
-        <div style="font-size:0.80rem;color:#94a3b8;line-height:1.5">
-          • Risk Per Trade: <b style="color:#f1f5f9">1.0% ($10 max on $1,000)</b><br/>
-          • Max Daily Drawdown: <b style="color:#f1f5f9">5.0% ($50 max loss)</b><br/>
-          • Max Open Trades: <b style="color:#f1f5f9">3 Concurrent Contracts</b><br/>
-          • Stake Limits: <b style="color:#f1f5f9">$1.00 Floor – $10.00 Ceiling</b>
-        </div>
+    <div style="margin-top:0.3rem">
+      <!-- Self-Healing Telemetry Strip -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.65rem">
+        <b style="color:#38bdf8;font-size:0.88rem">🖥️ Server Telemetry & System Load</b>
+        <span class="pill pill-win" style="font-size:0.65rem">● SELF-HEALING ONLINE</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:0.75rem;margin-bottom:1rem">
+        {cpu_gauge}
+        {ram_gauge}
+        {disk_gauge}
       </div>
 
-      <div class="stat" style="background:#090d16;border:1px solid #1e293b;border-radius:10px;padding:1rem">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem">
-          <b style="color:#f8fafc;font-size:0.92rem">🧬 Agent Breeding System</b>
-          <span class="badge badge-high">GENETIC ALGORITHM</span>
+      <!-- Portfolio Manager Veto Rules & Breeding -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:0.85rem">
+        <div class="stat" style="background:#090d16;border:1px solid rgba(56,189,248,0.12);border-radius:10px;padding:1rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem">
+            <b style="color:#f8fafc;font-size:0.92rem">🛡️ Portfolio Manager Agent</b>
+            <span class="pill pill-loss" style="font-size:0.65rem">HARD VETO ACTIVE</span>
+          </div>
+          <p style="margin:0 0 0.5rem;font-size:0.75rem;color:#38bdf8;font-weight:600">Capital Allocation & Exposure Control</p>
+          <div style="font-size:0.80rem;color:#94a3b8;line-height:1.6;font-family:'JetBrains Mono',monospace">
+            • Risk Per Trade: <b style="color:#f1f5f9">1.0% ($10 max on $1,000)</b><br/>
+            • Max Daily Drawdown: <b style="color:#f1f5f9">5.0% ($50 max loss)</b><br/>
+            • Max Open Trades: <b style="color:#f1f5f9">3 Concurrent Contracts</b><br/>
+            • Stake Limits: <b style="color:#f1f5f9">$1.00 Floor – $10.00 Ceiling</b>
+          </div>
         </div>
-        <p style="margin:0 0 0.5rem;font-size:0.75rem;color:#38bdf8;font-weight:600">Strategy DNA & Evolutionary Breeding</p>
-        <div style="font-size:0.80rem;color:#94a3b8;line-height:1.5">
-          • Population Pool: <b style="color:#f1f5f9">Strategy DNA Candidates</b><br/>
-          • Fitness Function: <b style="color:#f1f5f9">(Win_Rate * Profit) - Drawdown</b><br/>
-          • Operators: <b style="color:#f1f5f9">Crossover & Mutation (15%)</b><br/>
-          • Evolution: <b style="color:#f1f5f9">Auto-breeds fittest offspring</b>
-        </div>
-      </div>
 
-      <div class="stat" style="background:#090d16;border:1px solid #1e293b;border-radius:10px;padding:1rem">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem">
-          <b style="color:#f8fafc;font-size:0.92rem">🖥️ Infrastructure Health</b>
-          <span class="badge badge-high">24/7 HOME SERVER</span>
-        </div>
-        <p style="margin:0 0 0.5rem;font-size:0.75rem;color:#38bdf8;font-weight:600">Self-Healing Ubuntu Telemetry</p>
-        <div style="font-size:0.80rem;color:#94a3b8;line-height:1.5">
-          • CPU Usage: <b class="{cpu_cls}">{cpu}%</b><br/>
-          • RAM Usage: <b class="{ram_cls}">{ram}%</b><br/>
-          • Disk Usage: <b class="{disk_cls}">{disk}%</b><br/>
-          • Self-Healing: <b class="ok">● Auto-Restart & Alerts Active</b>
+        <div class="stat" style="background:#090d16;border:1px solid rgba(56,189,248,0.12);border-radius:10px;padding:1rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem">
+            <b style="color:#f8fafc;font-size:0.92rem">🧬 Agent Breeding System</b>
+            <span class="pill pill-win" style="font-size:0.65rem">GENETIC ALGORITHM</span>
+          </div>
+          <p style="margin:0 0 0.5rem;font-size:0.75rem;color:#38bdf8;font-weight:600">Strategy DNA & Evolutionary Breeding</p>
+          <div style="font-size:0.80rem;color:#94a3b8;line-height:1.6;font-family:'JetBrains Mono',monospace">
+            • Population Pool: <b style="color:#f1f5f9">Strategy DNA Candidates</b><br/>
+            • Fitness Function: <b style="color:#f1f5f9">(Win_Rate * Profit) - Drawdown</b><br/>
+            • Operators: <b style="color:#f1f5f9">Crossover & Mutation (15%)</b><br/>
+            • Evolution: <b style="color:#f1f5f9">Auto-breeds fittest offspring</b>
+          </div>
         </div>
       </div>
     </div>
@@ -1376,6 +1656,15 @@ async def api_metrics(_: Request) -> JSONResponse:
     )
 
 
+async def api_decision_intelligence(_: Request) -> JSONResponse:
+    """REST API: Decision Intelligence, Rejection Funnel, Shadow Trading, & A/B Experiments."""
+    if runtime.orchestrator:
+        di = runtime.orchestrator.decision_intelligence_status()
+    else:
+        di = {}
+    return JSONResponse(di)
+
+
 from starlette.endpoints import WebSocketEndpoint
 from starlette.websockets import WebSocket
 
@@ -1419,6 +1708,7 @@ routes = [
     Route("/api/v1/agents/{agent_name}/toggle", api_toggle_agent, methods=["POST"]),
     Route("/api/v1/trades/history", api_trade_history, methods=["GET"]),
     Route("/api/v1/metrics", api_metrics, methods=["GET"]),
+    Route("/api/v1/decision_intelligence", api_decision_intelligence, methods=["GET"]),
     WebSocketRoute("/api/v1/ws/stream", AndroidDashboardStream),
 ]
 

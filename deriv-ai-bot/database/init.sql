@@ -219,4 +219,106 @@ CREATE TABLE IF NOT EXISTS trade_memory (
 CREATE INDEX IF NOT EXISTS idx_trade_memory_sym_status ON trade_memory (symbol, status);
 CREATE INDEX IF NOT EXISTS idx_trade_memory_opened ON trade_memory (opened_at DESC);
 
+-- 12. Decision Audit Log (Every evaluated market opportunity trace)
+CREATE TABLE IF NOT EXISTS decision_audit (
+    id BIGSERIAL PRIMARY KEY,
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    symbol VARCHAR(32) NOT NULL,
+    market_regime VARCHAR(32),
+    proposed_contract_type VARCHAR(32),
+    proposed_duration INT,
+    proposed_duration_unit VARCHAR(8) DEFAULT 't',
+    original_agent_confidence NUMERIC(5, 4),
+    individual_specialist_votes JSONB DEFAULT '[]',
+    agent_reputation_weights JSONB DEFAULT '{}',
+    consensus_score NUMERIC(5, 4),
+    quorum_result BOOLEAN DEFAULT FALSE,
+    htf_alignment_result BOOLEAN DEFAULT TRUE,
+    atr_volatility_value NUMERIC(10, 6),
+    adaptive_expiry_selected INT,
+    boom_crash_cooldown_state BOOLEAN DEFAULT FALSE,
+    live_payout NUMERIC(6, 4) DEFAULT 0.8700,
+    estimated_probability NUMERIC(5, 4),
+    expected_value NUMERIC(6, 4),
+    portfolio_manager_decision BOOLEAN DEFAULT TRUE,
+    final_decision VARCHAR(32) NOT NULL, -- EXECUTED, REJECTED_SHADOW, REJECTED_STOPPED
+    rejection_reason VARCHAR(64), -- quorum, htf_alignment, ev_gate, regime_gate, cooldown, portfolio_manager, confidence_threshold
+    trade_id BIGINT -- contract_id if executed
+);
+
+CREATE INDEX IF NOT EXISTS idx_decision_audit_sym_ts ON decision_audit (symbol, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_decision_audit_decision ON decision_audit (final_decision, rejection_reason);
+
+-- 13. Shadow Trades Tracking (Hypothetical execution for rejected opportunities)
+CREATE TABLE IF NOT EXISTS shadow_trades (
+    id BIGSERIAL PRIMARY KEY,
+    decision_audit_id BIGINT REFERENCES decision_audit(id) ON DELETE CASCADE,
+    symbol VARCHAR(32) NOT NULL,
+    contract_type VARCHAR(32) NOT NULL,
+    rejection_gate VARCHAR(64) NOT NULL,
+    shadow_entry_price NUMERIC(14, 6),
+    shadow_exit_price NUMERIC(14, 6),
+    shadow_result VARCHAR(16), -- WIN, LOSS
+    shadow_profit_loss NUMERIC(10, 2),
+    shadow_duration INT NOT NULL,
+    shadow_duration_unit VARCHAR(8) DEFAULT 't',
+    opened_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMP WITH TIME ZONE,
+    ticks_tracked JSONB DEFAULT '[]',
+    status VARCHAR(32) DEFAULT 'pending' -- pending, completed
+);
+
+CREATE INDEX IF NOT EXISTS idx_shadow_trades_gate ON shadow_trades (rejection_gate, status);
+CREATE INDEX IF NOT EXISTS idx_shadow_trades_opened ON shadow_trades (opened_at DESC);
+
+-- 14. Gate Performance & Effectiveness Metrics
+CREATE TABLE IF NOT EXISTS gate_performance (
+    gate_name VARCHAR(64) PRIMARY KEY,
+    accepted_opportunities INT DEFAULT 0,
+    rejected_opportunities INT DEFAULT 0,
+    accepted_win_rate NUMERIC(5, 2) DEFAULT 0.00,
+    shadow_rejected_win_rate NUMERIC(5, 2) DEFAULT 0.00,
+    accepted_expected_value NUMERIC(6, 4) DEFAULT 0.0000,
+    rejected_realized_hypothetical_ev NUMERIC(6, 4) DEFAULT 0.0000,
+    profit_factor NUMERIC(6, 3) DEFAULT 0.000,
+    average_return NUMERIC(6, 4) DEFAULT 0.0000,
+    maximum_drawdown NUMERIC(5, 2) DEFAULT 0.00,
+    sample_size INT DEFAULT 0,
+    status VARCHAR(32) DEFAULT 'INSUFFICIENT_DATA', -- INSUFFICIENT_DATA, POSITIVE, NEGATIVE
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Seed default gate performance records
+INSERT INTO gate_performance (gate_name, status)
+VALUES
+    ('quorum', 'INSUFFICIENT_DATA'),
+    ('htf_alignment', 'INSUFFICIENT_DATA'),
+    ('ev_gate', 'INSUFFICIENT_DATA'),
+    ('regime_gate', 'INSUFFICIENT_DATA'),
+    ('cooldown', 'INSUFFICIENT_DATA'),
+    ('portfolio_manager', 'INSUFFICIENT_DATA'),
+    ('confidence_threshold', 'INSUFFICIENT_DATA')
+ON CONFLICT (gate_name) DO NOTHING;
+
+-- 15. Strategy Experiments Framework (A/B testing CONTROL vs CHALLENGER in shadow mode)
+CREATE TABLE IF NOT EXISTS strategy_experiments (
+    id SERIAL PRIMARY KEY,
+    experiment_name VARCHAR(64) UNIQUE NOT NULL,
+    control_config JSONB NOT NULL,
+    challenger_config JSONB NOT NULL,
+    status VARCHAR(32) DEFAULT 'active', -- active, paused, completed
+    mode VARCHAR(16) DEFAULT 'shadow', -- shadow (NEVER live execution)
+    metrics JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Seed default experiment setups (EV threshold, Quorum, Volatility expiry)
+INSERT INTO strategy_experiments (experiment_name, control_config, challenger_config, status, mode)
+VALUES
+    ('EV_Threshold_Exp', '{"ev_threshold": 0.08}', '{"ev_threshold": 0.05}', 'active', 'shadow'),
+    ('Quorum_Exp', '{"min_quorum": 2}', '{"min_quorum": 3}', 'active', 'shadow'),
+    ('Vol_Expiry_Exp', '{"base_duration": 5}', '{"high_vol_duration": 8}', 'active', 'shadow')
+ON CONFLICT (experiment_name) DO NOTHING;
+
+
 

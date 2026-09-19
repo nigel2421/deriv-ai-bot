@@ -64,6 +64,8 @@ from src.agents.consensus_agent import ConsensusAgent
 from src.agents.risk_agent import RiskAgent
 from src.agents.execution_agent import ExecutionAgent
 from src.agents.base_agent import AgentSignal
+from src.strategy.decision_auditor import DecisionAuditor, DecisionTrace, ShadowTrader, GateAnalytics
+from src.strategy.experiment_engine import ExperimentEngine
 from datetime import datetime, timezone
 
 
@@ -221,6 +223,11 @@ class TradingOrchestrator:
         self.consensus_agent = ConsensusAgent(min_consensus_score=self.min_confidence)
         self.risk_agent = RiskAgent()
         self.execution_agent = ExecutionAgent(self.executor)
+
+        # Decision Audit, Shadow Trading & Experiment Subsystems
+        self.auditor = DecisionAuditor()
+        self.shadow_trader = ShadowTrader()
+        self.experiment_engine = ExperimentEngine()
 
 
         # Prefer env SYMBOLS; ensure strategy.xml markets are covered when listed
@@ -430,10 +437,13 @@ class TradingOrchestrator:
             if not ticks:
                 continue
 
+            current_quote = ticks[-1].get("quote", 0.0) if isinstance(ticks[-1], dict) else float(ticks[-1])
+            current_epoch = ticks[-1].get("epoch") if isinstance(ticks[-1], dict) else None
+            # Update pending shadow trades for this symbol
+            self.shadow_trader.on_tick(symbol, current_quote, current_epoch)
+
             # Optimization #5: Boom/Crash 30-tick post-spike cooldown filter
-            if is_boom_crash_post_spike_cooldown(symbol, ticks, 30):
-                logger.info("Skip %s: post-spike 30-tick cooldown filter active", symbol)
-                continue
+            is_cooldown = is_boom_crash_post_spike_cooldown(symbol, ticks, 30)
 
             runtime = self.strategy_engine.get(symbol)
             if not runtime or not runtime.is_tradeable():
@@ -475,25 +485,92 @@ class TradingOrchestrator:
             if decision and decision.raw_intent:
                 intent = decision.raw_intent
                 ct = decision.contract_type
+                raw_conf = decision.confidence
 
                 # Optimization #2: Multi-timeframe HTF alignment gate
-                if not check_multi_timeframe_alignment(ticks, ct):
-                    logger.info("Skip %s %s: multi-timeframe HTF trend alignment conflict", symbol, ct)
-                    continue
-
-                # Anti-spiral check
-                ok_as, why = self.anti_spiral.allow(symbol, str(ct), decision.confidence)
-                if not ok_as:
-                    logger.info("MultiAgent AntiSpiral block %s %s: %s", symbol, ct, why)
-                    continue
+                htf_ok = check_multi_timeframe_alignment(ticks, ct)
 
                 # Optimization #1: Dynamic Expiry Scaling by Volatility/ATR
                 base_dur = intent.get("duration") or 5
                 base_unit = intent.get("duration_unit") or "t"
                 scaled_dur, scaled_unit = calculate_atr_scaled_duration(ticks, base_dur, base_unit)
+
+                # Optimization #4: Live Payout EV Gating
+                ev_val = compute_ev(decision.confidence, intent.get("payout_rate", DEFAULT_PAYOUT_RATE))
+
+                quorum_ok = len({v.agent_name for v in decision.votes}) >= self.consensus_agent.min_quorum
+                pm_ok, pm_reason = self.risk_manager.can_trade()
+
+                trace = DecisionTrace(
+                    symbol=symbol,
+                    market_regime=str(getattr(self, "_last_regime", "NORMAL")),
+                    proposed_contract_type=ct,
+                    proposed_duration=scaled_dur,
+                    proposed_duration_unit=scaled_unit,
+                    original_agent_confidence=raw_conf,
+                    individual_specialist_votes=[{"agent": v.agent_name, "vote": v.contract_type, "confidence": v.confidence, "weight": v.weight} for v in decision.votes],
+                    agent_reputation_weights={v.agent_name: v.weight for v in decision.votes},
+                    consensus_score=decision.ensemble_score,
+                    quorum_result=quorum_ok,
+                    htf_alignment_result=htf_ok,
+                    atr_volatility_value=1.0,
+                    adaptive_expiry_selected=scaled_dur,
+                    boom_crash_cooldown_state=is_cooldown,
+                    live_payout=DEFAULT_PAYOUT_RATE,
+                    estimated_probability=decision.ensemble_score,
+                    expected_value=ev_val,
+                    portfolio_manager_decision=pm_ok,
+                )
+
+                rejection_reason = None
+                if is_cooldown:
+                    rejection_reason = "cooldown"
+                elif not htf_ok:
+                    rejection_reason = "htf_alignment"
+                elif ev_val < 0.08:
+                    rejection_reason = "ev_gate"
+                elif not pm_ok:
+                    rejection_reason = "portfolio_manager"
+                elif not quorum_ok:
+                    rejection_reason = "quorum"
+
+                if rejection_reason:
+                    trace.final_decision = "REJECTED_SHADOW" if rejection_reason != "portfolio_manager" else "REJECTED_STOPPED"
+                    trace.rejection_reason = rejection_reason
+                    self.auditor.record_trace(trace)
+
+                    # Spawn Shadow Trade for hypothetical tracking (NEVER executes real trade)
+                    self.shadow_trader.spawn_shadow_trade(
+                        symbol=symbol,
+                        contract_type=ct,
+                        rejection_gate=rejection_reason,
+                        entry_price=current_quote,
+                        duration=scaled_dur,
+                        duration_unit=scaled_unit,
+                        audit_id=trace.audit_id,
+                    )
+
+                    # Shadow test challenger experiment configs
+                    self.experiment_engine.evaluate_opportunity(
+                        symbol=symbol,
+                        contract_type=ct,
+                        control_passed=False,
+                        control_ev=ev_val,
+                        control_quorum=len(decision.votes),
+                        shadow_trader=self.shadow_trader,
+                        entry_price=current_quote,
+                        duration=scaled_dur,
+                        duration_unit=scaled_unit,
+                    )
+                    logger.info("Decision Trace %s %s REJECTED via gate: %s", symbol, ct, rejection_reason)
+                    continue
+
+                # Passed all gates
+                trace.final_decision = "EXECUTED"
+                self.auditor.record_trace(trace)
+
                 intent["duration"] = scaled_dur
                 intent["duration_unit"] = scaled_unit
-
                 intent["confidence"] = decision.confidence
                 intent["ensemble_score"] = decision.ensemble_score
                 intent["raw_confidence"] = decision.confidence
@@ -501,12 +578,6 @@ class TradingOrchestrator:
                 intent["participating_agents"] = [v.agent_name for v in decision.votes]
                 intent["mor_score"] = self.mor_tracker.update_score(symbol, decision.ensemble_score)
                 intent["payout_rate"] = DEFAULT_PAYOUT_RATE
-
-                # Optimization #4: Live Payout EV Gating (EV >= +0.08 USD)
-                ev_val = compute_ev(decision.confidence, intent["payout_rate"])
-                if ev_val < 0.08:
-                    logger.info("Skip %s %s: EV %.3f < +0.08 threshold", symbol, ct, ev_val)
-                    continue
                 intent["ev"] = ev_val
 
                 intent["mps"] = self.profit_tracker.get_mps(symbol, ct)
@@ -1668,6 +1739,21 @@ class TradingOrchestrator:
             "multi_agent": self.multi_agent_status(),
         }
 
+    def decision_intelligence_status(self) -> Dict[str, Any]:
+        """Telemetry snapshot for Decision Audit, Shadow Trading, and Gate Analytics."""
+        recent_traces = [t.to_dict() for t in self.auditor.traces[-50:]]
+        rejection_counts = self.auditor.rejection_funnel_counts()
+        gate_summary = GateAnalytics(self.shadow_trader.shadow_trades).summary()
+        experiments_summary = self.experiment_engine.summary()
+        shadow_summary = self.shadow_trader.get_active_and_settled_summary()
+        return {
+            "rejection_funnel": rejection_counts,
+            "recent_traces": recent_traces,
+            "gate_effectiveness": gate_summary,
+            "experiments": experiments_summary,
+            "shadow_trades": shadow_summary,
+        }
+
     def risk_status(self) -> Dict[str, Any]:
         return {
             **self.risk_manager.snapshot(),
@@ -1700,6 +1786,7 @@ class TradingOrchestrator:
             "deepseek": self.deepseek_advisor.snapshot(),
             "fx_minute_duration": preferred_minute_duration("frxEURUSD", self.minute_duration),
             "multi_agent": self.multi_agent_status(),
+            "decision_intelligence": self.decision_intelligence_status(),
         }
 
 

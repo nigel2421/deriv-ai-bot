@@ -1,0 +1,56 @@
+{
+  "experiments": [
+    {
+      "experiment_name": "EV_Threshold_Exp",
+      "control_config": {
+        "ev_threshold": 0.08
+      },
+      "challenger_config": {
+        "ev_threshold": 0.05
+      },
+      "status": "active",
+      "mode": "shadow",
+      "control_results": [],
+      "challenger_results": [
+        {
+          "shadow_id": "SHADOW_R_25_210937634893",
+          "symbol": "R_25",
+          "contract_type": "CALL",
+          "timestamp": "2026-09-19T21:09:37.635161+00:00"
+        },
+        {
+          "shadow_id": "SHADOW_R_25_211159203952",
+          "symbol": "R_25",
+          "contract_type": "CALL",
+          "timestamp": "2026-09-19T21:11:59.204027+00:00"
+        }
+      ]
+    },
+    {
+      "experiment_name": "Quorum_Exp",
+      "control_config": {
+        "min_quorum": 2
+      },
+      "challenger_config": {
+        "min_quorum": 3
+      },
+      "status": "active",
+      "mode": "shadow",
+      "control_results": [],
+      "challenger_results": []
+    },
+    {
+      "experiment_name": "Vol_Expiry_Exp",
+      "control_config": {
+        "base_duration": 5
+      },
+      "challenger_config": {
+        "high_vol_duration": 8
+      },
+      "status": "active",
+      "mode": "shadow",
+      "control_results": [],
+      "challenger_results": []
+    }
+  ]
+}
