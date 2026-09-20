@@ -48,6 +48,9 @@ class DecisionTrace:
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     audit_id: Optional[int] = None
 
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
 
 @dataclass
 class ShadowTrade:

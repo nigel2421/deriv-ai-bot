@@ -50,6 +50,9 @@ def run_cmd(cmd):
         print(safe_line, end="", flush=True)
     return stdout.channel.recv_exit_status()
 
+print("Configuring firewall rules...")
+run_cmd("ufw allow 80/tcp && ufw allow 8080/tcp")
+
 print("Rebuilding and restarting Docker containers...")
 run_cmd(f"cd {TARGET_DIR} && docker compose up --build -d")
 

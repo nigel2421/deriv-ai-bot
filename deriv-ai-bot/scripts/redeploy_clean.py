@@ -52,10 +52,19 @@ def run_cmd(cmd):
         print(safe_line, end="", flush=True)
     return stdout.channel.recv_exit_status()
 
-print("Rebuilding and restarting Docker containers...")
-run_cmd(f"cd {TARGET_DIR} && docker compose up --build -d")
+print("Configuring UFW Firewall (Ports 80 & 8080)...")
+run_cmd("ufw allow 80/tcp && ufw allow 8080/tcp && ufw reload")
+
+print("Force rebuilding Docker containers (no cache)...")
+run_cmd(f"cd {TARGET_DIR} && docker compose build --no-cache api-dashboard agent-manager trading-engine")
+
+print("Restarting services...")
+run_cmd(f"cd {TARGET_DIR} && docker compose up -d --force-recreate")
 
 print("\n--- Container Status ---")
 run_cmd(f"cd {TARGET_DIR} && docker compose ps")
+
+print("\n--- Tail API Dashboard Logs ---")
+run_cmd(f"cd {TARGET_DIR} && docker compose logs --tail=30 api-dashboard")
 
 ssh.close()

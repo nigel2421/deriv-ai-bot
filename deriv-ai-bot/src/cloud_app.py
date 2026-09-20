@@ -523,8 +523,9 @@ def _fmt_decision_intelligence_panel(s: dict) -> str:
             f"</tr>"
         )
     exp_table = (
+        '<div class="table-container">'
         "<table><thead><tr><th>Experiment</th><th>Control (Shadow)</th><th>Challenger (Shadow)</th><th>Status</th></tr></thead>"
-        f"<tbody>{''.join(exp_rows)}</tbody></table>"
+        f"<tbody>{''.join(exp_rows)}</tbody></table></div>"
         if exp_rows
         else "<p class='muted'>No active A/B experiments.</p>"
     )
@@ -549,9 +550,10 @@ def _fmt_decision_intelligence_panel(s: dict) -> str:
             f"</tr>"
         )
     traces_table = (
+        '<div class="table-container">'
         "<table><thead><tr><th>Audit ID</th><th>Symbol</th><th>Proposed Contract</th>"
         "<th>Score</th><th>HTF</th><th>EV</th><th>Verdict</th><th>Rejection</th></tr></thead>"
-        f"<tbody>{''.join(trace_rows)}</tbody></table>"
+        f"<tbody>{''.join(trace_rows)}</tbody></table></div>"
         if trace_rows
         else "<p class='muted'>No decision traces captured yet.</p>"
     )
@@ -568,7 +570,7 @@ def _fmt_decision_intelligence_panel(s: dict) -> str:
       {exp_table}
 
       <b style="color:#38bdf8;font-size:0.9rem;display:block;margin-top:1rem">📜 Recent Decision Audit Traces</b>
-      <div style="overflow-x:auto;margin-top:0.3rem">{traces_table}</div>
+      {traces_table}
     </div>
     """
 
@@ -753,7 +755,7 @@ async def root(_: Request) -> HTMLResponse:
     th {{ text-align: left; color: #94a3b8; font-weight: 600; padding: 0.5rem 0.4rem; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 0.72rem; text-transform: uppercase; }}
     td {{ padding: 0.5rem 0.4rem; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }}
     tr:hover td {{ background: rgba(56,189,248,.04); }}
-    .pill {{ display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.7rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; }}
+    .pill {{ display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.7rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; white-space: nowrap; }}
     .pill-win {{ background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }}
     .pill-loss {{ background: rgba(244, 63, 94, 0.15); color: #f43f5e; border: 1px solid rgba(244, 63, 94, 0.4); }}
     .pill-offer {{ background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }}
@@ -763,33 +765,37 @@ async def root(_: Request) -> HTMLResponse:
     .bad {{ color: #f43f5e; }}
     .warn {{ color: #fbbf24; }}
     .muted {{ color: #94a3b8; }}
+    .table-container {{ width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: 0.5rem; margin-bottom: 0.5rem; border: 1px solid #1F293D; border-radius: 0.5rem; background: rgba(22, 31, 48, 0.4); }}
+    .table-container table {{ width: 100%; min-width: 520px; border-collapse: collapse; }}
+    @media (max-width: 640px) {{
+      th, td {{ padding: 0.4rem 0.3rem; font-size: 0.7rem; }}
+    }}
   </style>
-  <meta http-equiv="refresh" content="15"/>
 </head>
 <body class="bg-surface-base text-text-primary flex flex-col min-h-screen selection:bg-agent-indigo selection:text-white">
 
   <!-- Header Control Bar -->
-  <header class="fixed top-0 w-full z-50 bg-surface-base/90 backdrop-blur-xl border-b border-border-subtle">
-    <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-card border border-border-subtle">
+  <header class="fixed top-0 w-full z-50 bg-surface-base/95 backdrop-blur-xl border-b border-border-subtle">
+    <div class="max-w-7xl mx-auto px-2 sm:px-4 h-14 sm:h-16 flex items-center justify-between gap-1.5">
+      <div class="flex items-center gap-2 shrink min-w-0">
+        <div class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-card border border-border-subtle shrink-0">
           <span class="relative flex h-2 w-2">
-            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-profit-emerald opacity-75"></span>
-            <span class="relative inline-flex rounded-full h-2 w-2 bg-profit-emerald"></span>
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full {'bg-loss-rose' if 'ERROR' in str(s.get('status')).upper() or 'STOP' in str(s.get('status')).upper() or 'FAIL' in str(s.get('status')).upper() else 'bg-profit-emerald'} opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2 w-2 {'bg-loss-rose' if 'ERROR' in str(s.get('status')).upper() or 'STOP' in str(s.get('status')).upper() or 'FAIL' in str(s.get('status')).upper() else 'bg-profit-emerald'}"></span>
           </span>
-          <span class="font-label-sm text-xs text-profit-emerald uppercase font-bold tracking-wider">{s.get('status','running').upper()}</span>
+          <span class="font-label-sm text-[10px] sm:text-xs {'text-loss-rose' if 'ERROR' in str(s.get('status')).upper() or 'STOP' in str(s.get('status')).upper() or 'FAIL' in str(s.get('status')).upper() else 'text-profit-emerald'} uppercase font-bold tracking-wider">{s.get('status','running').upper()}</span>
         </div>
-        <span class="font-bold text-lg text-text-primary uppercase tracking-tight">Deriv AI</span>
+        <span class="font-bold text-sm sm:text-lg text-text-primary uppercase tracking-tight truncate">Deriv AI</span>
       </div>
 
-      <div class="flex items-center gap-3">
-        <div class="flex items-center gap-1.5 bg-surface-card px-2 py-1 rounded border border-border-subtle">
-          <button onclick="location.href='/control/resume'" class="p-1 text-profit-emerald hover:bg-surface-elevated rounded" title="Resume Bot"><span class="material-symbols-outlined text-[18px]">play_arrow</span></button>
-          <button onclick="location.href='/control/pause'" class="p-1 text-warning-amber hover:bg-surface-elevated rounded" title="Pause Bot"><span class="material-symbols-outlined text-[18px]">pause</span></button>
-          <button onclick="location.href='/control/restart'" class="p-1 text-agent-cyan hover:bg-surface-elevated rounded" title="Restart Bot"><span class="material-symbols-outlined text-[18px]">restart_alt</span></button>
-          <button onclick="location.href='/control/pause'" class="p-1 text-loss-rose hover:bg-surface-elevated rounded" title="Emergency Halt"><span class="material-symbols-outlined text-[18px]">power_settings_new</span></button>
+      <div class="flex items-center gap-1.5 sm:gap-3 shrink-0">
+        <div class="flex items-center gap-0.5 sm:gap-1.5 bg-surface-card px-1 sm:px-2 py-1 rounded border border-border-subtle">
+          <button onclick="location.href='/control/resume'" class="p-1 text-profit-emerald hover:bg-surface-elevated rounded" title="Resume Bot"><span class="material-symbols-outlined text-[16px] sm:text-[18px]">play_arrow</span></button>
+          <button onclick="location.href='/control/pause'" class="p-1 text-warning-amber hover:bg-surface-elevated rounded" title="Pause Bot"><span class="material-symbols-outlined text-[16px] sm:text-[18px]">pause</span></button>
+          <button onclick="location.href='/control/restart'" class="p-1 text-agent-cyan hover:bg-surface-elevated rounded" title="Restart Bot"><span class="material-symbols-outlined text-[16px] sm:text-[18px]">restart_alt</span></button>
+          <button onclick="location.href='/control/pause'" class="p-1 text-loss-rose hover:bg-surface-elevated rounded" title="Emergency Halt"><span class="material-symbols-outlined text-[16px] sm:text-[18px]">power_settings_new</span></button>
         </div>
-        <div class="flex items-center px-3 py-1 rounded bg-surface-card border border-border-subtle">
+        <div class="hidden sm:flex items-center px-3 py-1 rounded bg-surface-card border border-border-subtle">
           <span class="font-label-sm text-xs text-text-muted mr-1">BAL</span>
           <span class="font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold">{bal_str}</span>
         </div>
@@ -1103,7 +1109,7 @@ async def root(_: Request) -> HTMLResponse:
     </section>
 
     <!-- Dedicated Market Sub-Agents (20 Active Watchers) -->
-    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+    <section onclick="openBottomDrawer('markets')" class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3 cursor-pointer hover:border-agent-cyan/40 transition-colors">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
           <span class="relative flex h-2 w-2">
@@ -1112,9 +1118,9 @@ async def root(_: Request) -> HTMLResponse:
           </span>
           <h2 class="font-bold text-text-primary tracking-tight">20 Market Watchers Scanning</h2>
         </div>
-        <div class="flex items-center gap-1 font-label-sm text-xs text-text-muted font-mono">
-          <span>R_10..JD50</span>
-          <span class="material-symbols-outlined text-[16px]">chevron_right</span>
+        <div class="flex items-center gap-1 font-label-sm text-xs text-agent-cyan font-mono">
+          <span>Open Fleet Drawer</span>
+          <span class="material-symbols-outlined text-[16px]">unfold_more</span>
         </div>
       </div>
       {_fmt_market_watchers_panel(s)}
@@ -1159,6 +1165,233 @@ async def root(_: Request) -> HTMLResponse:
     </section>
 
   </main>
+
+  <!-- Interactive Sliding Bottom Drawer Backdrop Overlay -->
+  <div id="drawer-backdrop" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden transition-opacity opacity-0" onclick="closeBottomDrawer()"></div>
+
+  <!-- Interactive Sliding Bottom Drawer Sheet -->
+  <div id="bottom-drawer" class="fixed inset-x-0 bottom-0 z-50 transform translate-y-full transition-transform duration-300 ease-out bg-surface-card border-t border-border-strong rounded-t-2xl shadow-2xl max-h-[85vh] flex flex-col w-full max-w-4xl mx-auto overflow-hidden">
+    <!-- Drag Handle & Top Bar -->
+    <div class="pt-3 pb-2 px-4 flex flex-col items-center border-b border-border-subtle bg-surface-elevated shrink-0 cursor-pointer" onclick="closeBottomDrawer()">
+      <div class="w-12 h-1.5 bg-border-strong rounded-full mb-2 hover:bg-text-muted transition-colors"></div>
+      <div class="w-full flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span id="drawer-icon" class="material-symbols-outlined text-agent-cyan text-[20px]">smart_toy</span>
+          <h3 id="drawer-title" class="font-bold text-text-primary text-base">Agent Intelligence Fleet</h3>
+        </div>
+        <button onclick="closeBottomDrawer()" class="p-1 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors">
+          <span class="material-symbols-outlined text-[20px]">close</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Drawer Navigation Tabs -->
+    <div class="flex items-center border-b border-border-subtle bg-surface-base px-4 overflow-x-auto no-scrollbar gap-1 text-xs shrink-0 py-1.5">
+      <button onclick="switchDrawerTab('agents')" id="tab-btn-agents" class="px-3 py-1.5 rounded-lg font-bold bg-agent-cyan text-surface-base transition-colors flex items-center gap-1.5">
+        <span class="material-symbols-outlined text-[16px]">smart_toy</span> Agents
+      </button>
+      <button onclick="switchDrawerTab('markets')" id="tab-btn-markets" class="px-3 py-1.5 rounded-lg font-medium text-text-muted hover:text-text-primary hover:bg-surface-elevated transition-colors flex items-center gap-1.5">
+        <span class="material-symbols-outlined text-[16px]">candlestick_chart</span> Markets (20)
+      </button>
+      <button onclick="switchDrawerTab('history')" id="tab-btn-history" class="px-3 py-1.5 rounded-lg font-medium text-text-muted hover:text-text-primary hover:bg-surface-elevated transition-colors flex items-center gap-1.5">
+        <span class="material-symbols-outlined text-[16px]">history</span> Executions & Audit
+      </button>
+      <button onclick="switchDrawerTab('settings')" id="tab-btn-settings" class="px-3 py-1.5 rounded-lg font-medium text-text-muted hover:text-text-primary hover:bg-surface-elevated transition-colors flex items-center gap-1.5">
+        <span class="material-symbols-outlined text-[16px]">settings</span> Bot Controls
+      </button>
+    </div>
+
+    <!-- Scrollable Drawer Body Content -->
+    <div class="p-4 overflow-y-auto flex-1 space-y-4 text-sm font-sans">
+      <!-- Tab 1: Agents -->
+      <div id="drawer-content-agents" class="drawer-tab-content space-y-4">
+        <div class="bg-surface-elevated p-3 rounded-xl border border-border-subtle">
+          <h4 class="font-bold text-text-primary mb-1 flex items-center gap-1.5 text-xs uppercase tracking-wider text-agent-cyan">
+            <span class="material-symbols-outlined text-[16px]">psychology</span> Redis Multi-Agent Ensemble
+          </h4>
+          {_fmt_agents_panel(s)}
+        </div>
+        <div class="bg-surface-elevated p-3 rounded-xl border border-border-subtle">
+          <h4 class="font-bold text-text-primary mb-1 flex items-center gap-1.5 text-xs uppercase tracking-wider text-warning-amber">
+            <span class="material-symbols-outlined text-[16px]">military_tech</span> Leaderboard & RL Q-Table
+          </h4>
+          {_fmt_meta_agent_panel(s)}
+        </div>
+      </div>
+
+      <!-- Tab 2: Markets -->
+      <div id="drawer-content-markets" class="drawer-tab-content hidden space-y-4">
+        <div class="bg-surface-elevated p-3 rounded-xl border border-border-subtle">
+          <h4 class="font-bold text-text-primary mb-1 flex items-center gap-1.5 text-xs uppercase tracking-wider text-profit-emerald">
+            <span class="material-symbols-outlined text-[16px]">equalizer</span> Market Opportunity Ranking (MOR)
+          </h4>
+          {_fmt_mor_panel(s)}
+        </div>
+        <div class="bg-surface-elevated p-3 rounded-xl border border-border-subtle">
+          <h4 class="font-bold text-text-primary mb-1 flex items-center gap-1.5 text-xs uppercase tracking-wider text-agent-cyan">
+            <span class="material-symbols-outlined text-[16px]">radar</span> 20 Active Watcher Sub-Agents
+          </h4>
+          {_fmt_market_watchers_panel(s)}
+        </div>
+      </div>
+
+      <!-- Tab 3: History & Decisions -->
+      <div id="drawer-content-history" class="drawer-tab-content hidden space-y-4">
+        <div class="bg-surface-elevated p-3 rounded-xl border border-border-subtle">
+          <h4 class="font-bold text-text-primary mb-2 flex items-center gap-1.5 text-xs uppercase tracking-wider text-primary">
+            <span class="material-symbols-outlined text-[16px]">receipt_long</span> Live Contract Executions
+          </h4>
+          <div class="flex flex-col gap-2 font-mono">
+            {recent_trade_cards}
+          </div>
+        </div>
+        <div class="bg-surface-elevated p-3 rounded-xl border border-border-subtle">
+          <h4 class="font-bold text-text-primary mb-1 flex items-center gap-1.5 text-xs uppercase tracking-wider text-secondary">
+            <span class="material-symbols-outlined text-[16px]">troubleshoot</span> Decision Audit Traces & Gate Funnel
+          </h4>
+          {_fmt_decision_intelligence_panel(s)}
+        </div>
+      </div>
+
+      <!-- Tab 4: Bot Controls & Settings -->
+      <div id="drawer-content-settings" class="drawer-tab-content hidden space-y-4">
+        <div class="bg-surface-elevated p-4 rounded-xl border border-border-subtle space-y-3">
+          <h4 class="font-bold text-text-primary text-xs uppercase tracking-wider text-warning-amber flex items-center gap-1.5">
+            <span class="material-symbols-outlined text-[16px]">tune</span> Quick Operation Controls
+          </h4>
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick="location.href='/control/resume'" class="p-2.5 rounded-lg bg-profit-emerald-muted border border-profit-emerald/30 text-profit-emerald font-bold flex items-center justify-center gap-2 hover:bg-profit-emerald/20 transition-colors">
+              <span class="material-symbols-outlined text-[18px]">play_arrow</span> Resume Trading
+            </button>
+            <button onclick="location.href='/control/pause'" class="p-2.5 rounded-lg bg-warning-amber-muted border border-warning-amber/30 text-warning-amber font-bold flex items-center justify-center gap-2 hover:bg-warning-amber/20 transition-colors">
+              <span class="material-symbols-outlined text-[18px]">pause</span> Pause 60 Mins
+            </button>
+            <button onclick="location.href='/control/restart'" class="p-2.5 rounded-lg bg-surface-card border border-border-subtle text-agent-cyan font-bold flex items-center justify-center gap-2 hover:bg-surface-overlay transition-colors">
+              <span class="material-symbols-outlined text-[18px]">restart_alt</span> Full Reconnect
+            </button>
+            <button onclick="location.href='/control/pause'" class="p-2.5 rounded-lg bg-loss-rose-muted border border-loss-rose/30 text-loss-rose font-bold flex items-center justify-center gap-2 hover:bg-loss-rose/20 transition-colors">
+              <span class="material-symbols-outlined text-[18px]">power_settings_new</span> Emergency Halt
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-surface-elevated p-4 rounded-xl border border-border-subtle space-y-2 text-xs font-mono">
+          <h4 class="font-bold text-text-primary uppercase tracking-wider text-text-muted mb-2">Environment Telemetry</h4>
+          <div class="flex justify-between py-1 border-b border-border-subtle">
+            <span class="text-text-muted">API Mode:</span>
+            <span class="text-primary font-bold">{DERIV_API_MODE}</span>
+          </div>
+          <div class="flex justify-between py-1 border-b border-border-subtle">
+            <span class="text-text-muted">App ID:</span>
+            <span class="text-text-primary">{DERIV_APP_ID}</span>
+          </div>
+          <div class="flex justify-between py-1 border-b border-border-subtle">
+            <span class="text-text-muted">Scan Cycle:</span>
+            <span class="text-agent-cyan">{cycle_sec} seconds</span>
+          </div>
+          <div class="flex justify-between py-1 border-b border-border-subtle">
+            <span class="text-text-muted">OAuth Token Stored:</span>
+            <span class="text-profit-emerald font-bold">{'YES' if load_access_token() else 'NO (Demo/API)'}</span>
+          </div>
+          <div class="pt-2 flex gap-2">
+            <a href="/oauth/login" class="flex-1 py-2 rounded bg-surface-card border border-border-subtle text-center text-secondary font-sans font-semibold hover:bg-surface-overlay">Authorize Deriv OAuth</a>
+            <a href="/diag" target="_blank" class="px-3 py-2 rounded bg-surface-card border border-border-subtle text-center text-text-muted hover:text-text-primary">JSON Diag</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fixed Bottom Navigation Bar -->
+  <nav class="fixed bottom-0 inset-x-0 z-40 bg-surface-card/95 backdrop-blur-xl border-t border-border-subtle shadow-[0_-2px_10px_rgba(0,0,0,0.5)]">
+    <div class="max-w-md mx-auto flex items-center justify-around h-16 px-3">
+      <button onclick="closeBottomDrawer(); window.scrollTo({{top:0, behavior:'smooth'}});" class="flex flex-col items-center justify-center min-w-[56px] py-1 text-agent-cyan hover:text-white transition-colors">
+        <span class="material-symbols-outlined text-[22px]">grid_view</span>
+        <span class="font-label-sm text-[10px] tracking-tight mt-0.5">Dashboard</span>
+      </button>
+
+      <button onclick="openBottomDrawer('agents')" class="flex flex-col items-center justify-center min-w-[56px] py-1 text-text-muted hover:text-agent-cyan transition-colors">
+        <span class="material-symbols-outlined text-[22px]">smart_toy</span>
+        <span class="font-label-sm text-[10px] tracking-tight mt-0.5">Agents</span>
+      </button>
+
+      <button onclick="openBottomDrawer('markets')" class="flex flex-col items-center justify-center min-w-[56px] py-1 text-text-muted hover:text-profit-emerald transition-colors">
+        <span class="material-symbols-outlined text-[22px]">candlestick_chart</span>
+        <span class="font-label-sm text-[10px] tracking-tight mt-0.5">Markets</span>
+      </button>
+
+      <button onclick="openBottomDrawer('history')" class="flex flex-col items-center justify-center min-w-[56px] py-1 text-text-muted hover:text-primary transition-colors">
+        <span class="material-symbols-outlined text-[22px]">history</span>
+        <span class="font-label-sm text-[10px] tracking-tight mt-0.5">History</span>
+      </button>
+
+      <button onclick="openBottomDrawer('settings')" class="flex flex-col items-center justify-center min-w-[56px] py-1 text-text-muted hover:text-warning-amber transition-colors">
+        <span class="material-symbols-outlined text-[22px]">settings</span>
+        <span class="font-label-sm text-[10px] tracking-tight mt-0.5">Settings</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Bottom Drawer Control Script -->
+  <script>
+    function openBottomDrawer(tabName) {{
+      const backdrop = document.getElementById('drawer-backdrop');
+      const drawer = document.getElementById('bottom-drawer');
+      
+      if (tabName) {{
+        switchDrawerTab(tabName);
+      }}
+      
+      backdrop.classList.remove('hidden');
+      setTimeout(() => {{
+        backdrop.classList.remove('opacity-0');
+        drawer.classList.remove('translate-y-full');
+      }}, 10);
+    }}
+
+    function closeBottomDrawer() {{
+      const backdrop = document.getElementById('drawer-backdrop');
+      const drawer = document.getElementById('bottom-drawer');
+      
+      drawer.classList.add('translate-y-full');
+      backdrop.classList.add('opacity-0');
+      
+      setTimeout(() => {{
+        backdrop.classList.add('hidden');
+      }}, 300);
+    }}
+
+    function switchDrawerTab(tabName) {{
+      const tabs = ['agents', 'markets', 'history', 'settings'];
+      const titles = {{
+        'agents': 'Agent Intelligence Fleet',
+        'markets': '20 Active Market Watchers',
+        'history': 'Trade Log & Audit Traces',
+        'settings': 'Bot Controls & Configuration'
+      }};
+      const icons = {{
+        'agents': 'smart_toy',
+        'markets': 'candlestick_chart',
+        'history': 'history',
+        'settings': 'settings'
+      }};
+
+      document.getElementById('drawer-title').innerText = titles[tabName] || 'Quant Control Drawer';
+      document.getElementById('drawer-icon').innerText = icons[tabName] || 'tune';
+
+      tabs.forEach(t => {{
+        const content = document.getElementById('drawer-content-' + t);
+        const btn = document.getElementById('tab-btn-' + t);
+        if (t === tabName) {{
+          content.classList.remove('hidden');
+          btn.className = 'px-3 py-1.5 rounded-lg font-bold bg-agent-cyan text-surface-base transition-colors flex items-center gap-1.5';
+        }} else {{
+          content.classList.add('hidden');
+          btn.className = 'px-3 py-1.5 rounded-lg font-medium text-text-muted hover:text-text-primary hover:bg-surface-elevated transition-colors flex items-center gap-1.5';
+        }}
+      }});
+    }}
+  </script>
 </body>
 </html>"""
     return HTMLResponse(html)
@@ -1376,18 +1609,19 @@ def _fmt_meta_agent_panel(s: dict) -> str:
         )
 
     table_html = (
+        '<div class="table-container">'
         "<table><thead><tr><th>Agent</th><th>Status</th><th>Accuracy (Last 100 Trades)</th>"
         "<th>Dynamic Weight</th><th>Record</th><th>PnL</th><th>Meta Action</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
     )
 
     rl_html = """
-    <div style="background:#090d16;border:1px solid rgba(56,189,248,0.12);border-radius:10px;padding:0.85rem 1rem;margin-top:0.75rem;display:flex;justify-content:space-between;align-items:center">
+    <div class="bg-surface-elevated p-3 rounded-xl border border-border-subtle flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mt-3">
       <div>
-        <b style="color:#38bdf8;font-size:0.88rem">🤖 Reinforcement Learning Agent (RL Q-Table)</b>
-        <p class="muted" style="margin:0.25rem 0 0;font-size:0.78rem">State -> Action -> Reward feedback loop active. Learns Q(state, action) value to optimize execution signals.</p>
+        <b class="text-agent-cyan text-sm">🤖 Reinforcement Learning Agent (RL Q-Table)</b>
+        <p class="text-text-muted text-xs mt-1 leading-snug">State → Action → Reward feedback loop active. Learns Q(state, action) value to optimize execution signals.</p>
       </div>
-      <div>
+      <div class="shrink-0">
         <span class="pill pill-win">Q-LEARNING ACTIVE</span>
       </div>
     </div>
@@ -1578,9 +1812,10 @@ def _fmt_probability_panel(s: dict) -> str:
             f"</tr>"
         )
     return (
+        '<div class="table-container">'
         "<table><thead><tr><th>Setup</th><th>Confidence Level</th><th>Support</th>"
         "<th>Win Rate</th><th>PnL</th><th>Decay</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
     )
 
 
@@ -1611,9 +1846,10 @@ def _fmt_transition_panel(s: dict) -> str:
     if not rows:
         return "<p class='muted'>No transitions recorded yet.</p>"
     return (
+        '<div class="table-container">'
         "<table><thead><tr><th>Symbol</th><th>UP&#8594;UP</th><th>UP&#8594;DOWN</th>"
         "<th>DOWN&#8594;UP</th><th>DOWN&#8594;DOWN</th><th>Persistence</th><th>N</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
     )
 
 
@@ -1658,13 +1894,15 @@ def _fmt_mor_panel(s: dict) -> str:
             )
         bucket_html = (
             "<br/><p style='margin:0.75rem 0 0.4rem'><b>MOR Validation</b></p>"
+            '<div class="table-container">'
             f"<table><thead><tr><th>Bucket</th><th>Win Rate</th><th>N</th></tr></thead>"
-            f"<tbody>{''.join(brows)}</tbody></table>"
+            f"<tbody>{''.join(brows)}</tbody></table></div>"
         )
     return (
+        '<div class="table-container">'
         "<table><thead><tr><th>#</th><th>Symbol</th><th>Score</th><th>Yesterday</th>"
         "<th>Velocity</th><th>MOR90+ WR</th><th>Trades</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
         f"{bucket_html}"
     )
 
@@ -1704,9 +1942,10 @@ def _fmt_calibration_panel(s: dict) -> str:
         f"<p style='margin:0 0 0.5rem'>"
         f"Overall Error: <span class='{overall_cls}'><b>{overall_s}</b></span> · "
         f"{cum} trades · {deflation_s}</p>"
+        '<div class="table-container">'
         "<table><thead><tr><th>Bucket</th><th>Predicted</th><th>Actual WR</th>"
         "<th>Error</th><th>N</th><th>Status</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
     )
 
 
@@ -1762,9 +2001,10 @@ def _fmt_correlation_panel(s: dict) -> str:
             f"</tr>"
         )
     return (
+        '<div class="table-container">'
         "<table><thead><tr><th>Correlation Group</th><th>Signals</th>"
         "<th>Selected</th><th>Blocked</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
     )
 
 

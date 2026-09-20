@@ -499,7 +499,11 @@ class TradingOrchestrator:
                 ev_val = compute_ev(decision.confidence, intent.get("payout_rate", DEFAULT_PAYOUT_RATE))
 
                 quorum_ok = len({v.agent_name for v in decision.votes}) >= self.consensus_agent.min_quorum
-                pm_ok, pm_reason = self.risk_manager.can_trade()
+                pm_dec = self.risk_manager.can_trade(
+                    account_balance=self.client.get_balance(),
+                    open_trades=self.open_trade_count(),
+                )
+                pm_ok, pm_reason = pm_dec.allowed, pm_dec.reason
 
                 trace = DecisionTrace(
                     symbol=symbol,
@@ -1741,7 +1745,7 @@ class TradingOrchestrator:
 
     def decision_intelligence_status(self) -> Dict[str, Any]:
         """Telemetry snapshot for Decision Audit, Shadow Trading, and Gate Analytics."""
-        recent_traces = [t.to_dict() for t in self.auditor.traces[-50:]]
+        recent_traces = self.auditor.recent_traces(50)
         rejection_counts = self.auditor.rejection_funnel_counts()
         gate_summary = GateAnalytics(self.shadow_trader.shadow_trades).summary()
         experiments_summary = self.experiment_engine.summary()

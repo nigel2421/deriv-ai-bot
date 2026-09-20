@@ -15,15 +15,23 @@ PASS = "7EfOJ1iTE4xjz7KJ5lvCM7ZJPv"
 TARGET_DIR = "/bot"
 LOCAL_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-EXCLUDE_DIRS = {"venv", ".git", ".pytest_cache", "__pycache__", ".idea", ".vscode"}
-EXCLUDE_FILES = {"*.pyc", "*.pyo"}
+EXCLUDE_DIRS = {
+    "venv", ".git", ".pytest_cache", "__pycache__", ".idea", ".vscode",
+    "xml bots", "xml_bots", "historical", "logs", "test_tmp", "training"
+}
 
 def run_ssh_cmd(ssh, cmd, ignore_errors=False):
     print(f"\n[SSH RUN] {cmd}")
     stdin, stdout, stderr = ssh.exec_command(cmd, get_pty=True)
     
     for line in iter(stdout.readline, ""):
-        print(line, end="")
+        try:
+            print(line, end="")
+        except UnicodeEncodeError:
+            print(line.encode("ascii", errors="replace").decode("ascii"), end="")
+        except Exception:
+            pass
+        sys.stdout.flush()
         
     exit_code = stdout.channel.recv_exit_status()
     if exit_code != 0:
@@ -32,12 +40,13 @@ def run_ssh_cmd(ssh, cmd, ignore_errors=False):
         return False
     return True
 
+
 def upload_directory(sftp, local_dir, remote_dir):
     print(f"[SFTP] Syncing {local_dir} -> {remote_dir}...")
     
     for root, dirs, files in os.walk(local_dir):
         # Filter excluded directories in-place
-        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS and not d.startswith(".")]
         
         rel_path = os.path.relpath(root, local_dir)
         if rel_path == ".":
@@ -51,12 +60,14 @@ def upload_directory(sftp, local_dir, remote_dir):
             sftp.mkdir(remote_root)
             
         for file in files:
-            if file.endswith(".pyc"):
+            if file.endswith((".pyc", ".pyo", ".csv", ".log")) or file == "xml_batch_analysis.json":
                 continue
             local_file_path = os.path.join(root, file)
             remote_file_path = os.path.normpath(os.path.join(remote_root, file)).replace("\\", "/")
             
+            print(f"  -> Uploading: {os.path.join(rel_path, file)}")
             sftp.put(local_file_path, remote_file_path)
+
 
 def main():
     print("================================================================")
@@ -86,7 +97,8 @@ def main():
     # 3. Make scripts executable and run vps_setup.sh
     print("[INFO] Running vps_setup.sh (Installing Docker, Fail2ban, Firewall)...")
     run_ssh_cmd(ssh, f"chmod +x {TARGET_DIR}/scripts/*.sh")
-    run_ssh_cmd(ssh, f"bash {TARGET_DIR}/scripts/vps_setup.sh")
+    run_ssh_cmd(ssh, f"bash {TARGET_DIR}/scripts/vps_setup.sh", ignore_errors=True)
+
 
     # 4. Build and run Docker Compose containers
     print("[INFO] Rebuilding and restarting Docker Compose stack...")

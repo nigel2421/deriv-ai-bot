@@ -183,20 +183,23 @@ class RiskManager:
 
     def can_trade(
         self,
-        account_balance: Optional[float],
+        account_balance: Optional[float] = None,
         open_trades: int = 0,
         proposed_stake: Optional[float] = None,
     ) -> RiskDecision:
         """
         Pre-trade risk checks.
 
-        account_balance: live balance (None = unknown → deny).
+        account_balance: live balance (None = unknown → fallback to last_known_balance).
         open_trades: currently open contracts.
         proposed_stake: optional stake to validate affordability / size.
         """
         self._maybe_reset_daily()
         # Auto-resume if cooldown finished (resets consecutive_losses)
         self._expire_pause_if_due()
+
+        if account_balance is None:
+            account_balance = self.last_known_balance
 
         if account_balance is None:
             return RiskDecision(False, "balance_unknown")
