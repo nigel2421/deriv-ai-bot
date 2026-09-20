@@ -1,12 +1,12 @@
 {
   "stats": {
     "R_100|CALL": {
-      "wins": 55,
+      "wins": 65,
       "losses": 0,
       "streak_loss": 0,
-      "streak_win": 55,
+      "streak_win": 65,
       "pnl": 0.0,
-      "last_ts": 1789852984.1125288,
+      "last_ts": 1789887077.4805279,
       "conf_sum": 0.0,
       "conf_n": 0,
       "family": "",
@@ -43,8 +43,8 @@
       "profit_losses": 0.0
     }
   },
-  "global_wins": 57,
+  "global_wins": 67,
   "global_losses": 0,
-  "total_recorded": 57,
-  "updated_at": 1789852984.1129014
+  "total_recorded": 67,
+  "updated_at": 1789887077.4808893
 }

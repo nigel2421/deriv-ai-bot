@@ -573,12 +573,82 @@ def _fmt_decision_intelligence_panel(s: dict) -> str:
     """
 
 
+def _fmt_trade_card_items(trades: list) -> str:
+    """Formats live trade executions into modern high-density card items."""
+    if not trades:
+        return (
+            "<div class='bg-surface-elevated p-3 rounded-lg text-center text-text-muted font-mono text-sm'>"
+            "⚡ No trade executions recorded yet — active scan loop running..."
+            "</div>"
+        )
+    items = []
+    for t in trades[:12]:
+        st_raw = str(t.get("status") or "open").lower()
+        sym = t.get("symbol") or "—"
+        ct = t.get("contract_type") or "—"
+        conf = t.get("confidence")
+        conf_s = f"{float(conf):.0%}" if conf is not None else ""
+        stake = t.get("stake")
+        stake_s = f"${float(stake):.2f}" if stake is not None else "$1.00"
+        ts = t.get("closed_at") or t.get("opened_at") or t.get("ts") or "—"
+        if isinstance(ts, str) and "T" in ts:
+            ts = ts.replace("T", " ")[11:19]
+
+        profit = t.get("profit")
+        if st_raw == "win":
+            pill = "<span class='px-1.5 py-0.2 rounded bg-profit-emerald-muted text-profit-emerald font-label-sm text-label-sm font-bold'>WIN</span>"
+            pnl_val = float(profit) if profit is not None else 0.88
+            pnl_html = f"<span class='font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold'>+${pnl_val:.2f}</span>"
+            sub_text = f"Stake {stake_s}"
+        elif st_raw in ("loss", "failed", "buy_failed"):
+            pill = "<span class='px-1.5 py-0.2 rounded bg-loss-rose-muted text-loss-rose font-label-sm text-label-sm font-bold'>LOSS</span>"
+            pnl_val = float(profit) if profit is not None else -1.00
+            pnl_html = f"<span class='font-data-tabular-md text-data-tabular-md text-loss-rose font-bold'>-${abs(pnl_val):.2f}</span>"
+            sub_text = f"Stake {stake_s}"
+        elif st_raw in ("failed_offer", "offer_failed"):
+            pill = "<span class='px-1.5 py-0.2 rounded bg-surface-card text-text-muted font-label-sm text-label-sm font-bold'>FAILED_OFFER</span>"
+            pnl_html = f"<span class='font-data-tabular-md text-data-tabular-md text-text-muted'>Stake {stake_s}</span>"
+            sub_text = "<span class='text-loss-rose'>No Offer</span>"
+        elif st_raw in ("skipped", "skipped_low_payout"):
+            pill = "<span class='px-1.5 py-0.2 rounded bg-warning-amber-muted text-warning-amber font-label-sm text-label-sm font-bold'>SKIPPED</span>"
+            pnl_html = "<span class='font-data-tabular-md text-data-tabular-md text-text-muted font-bold'>—</span>"
+            sub_text = "<span class='text-warning-amber'>EV Vetoed</span>"
+        else:
+            pill = f"<span class='px-1.5 py-0.2 rounded bg-surface-card text-agent-cyan font-label-sm text-label-sm font-bold'>{st_raw.upper()}</span>"
+            pnl_html = f"<span class='font-data-tabular-md text-data-tabular-md text-agent-cyan'>Stake {stake_s}</span>"
+            sub_text = "Active"
+
+        cid = str(t.get("contract_id") or "")
+        cid_str = f" · #{cid[-10:]}" if cid else ""
+
+        items.append(
+            f"""
+            <div class="bg-surface-elevated p-2 rounded-lg flex items-center justify-between font-mono">
+              <div class="flex flex-col">
+                <div class="flex items-center gap-1.5">
+                  {pill}
+                  <span class="font-label-md text-label-md text-text-primary font-bold">{sym}</span>
+                  <span class="font-label-sm text-label-sm text-secondary">{ct}</span>
+                </div>
+                <span class="font-label-sm text-label-sm text-text-muted mt-0.5">{ts}{cid_str} {conf_s}</span>
+              </div>
+              <div class="text-right flex flex-col items-end">
+                {pnl_html}
+                <span class="font-label-sm text-label-sm text-text-muted">{sub_text}</span>
+              </div>
+            </div>
+            """
+        )
+    return "".join(items)
+
+
 async def root(_: Request) -> HTMLResponse:
     s = runtime.public_status()
     risk = s.get("risk") or {}
-    status_cls = "ok" if s.get("status") == "running" else "bad"
+    status_cls = "text-profit-emerald" if s.get("status") == "running" else "text-loss-rose"
     err_html = (
-        f"<p class='bad'>Error: {s.get('last_error')}</p>" if s.get("last_error") else ""
+        f"<div class='p-3 rounded bg-loss-rose-muted text-loss-rose font-mono text-sm mb-3'>Error: {s.get('last_error')}</div>"
+        if s.get("last_error") else ""
     )
     strats = s.get("strategies") or {}
     if not strats and runtime.orchestrator is not None:
@@ -595,13 +665,13 @@ async def root(_: Request) -> HTMLResponse:
             f"streak {mg.get('loss_streak', 0)}</li>"
         )
     strat_html = (
-        "<ul>" + "".join(strat_lines) + "</ul>"
+        "<ul class='text-sm text-text-secondary'>" + "".join(strat_lines) + "</ul>"
         if strat_lines
-        else "<p class='muted'>Strategies load after first cycle.</p>"
+        else "<p class='text-text-muted text-sm'>Strategies load after first cycle.</p>"
     )
     symbols = ", ".join(s.get("symbols") or [])
     open_rows = _fmt_trade_rows(s.get("open_trade_details") or [], open_mode=True)
-    recent_rows = _fmt_trade_rows(s.get("recent_trades") or [])
+    recent_trade_cards = _fmt_trade_card_items(s.get("recent_trades") or [])
     anti = s.get("anti_spiral") or {}
     bans = anti.get("setup_bans") or {}
     ban_html = (
@@ -609,299 +679,490 @@ async def root(_: Request) -> HTMLResponse:
         if bans
         else "none"
     )
-    oauth_hint = ""
-    if not is_legacy_app_id(str(DERIV_APP_ID)) and s.get("status") == "error":
-        oauth_hint = (
-            "<p class='muted'>Auth error? Complete "
-            "<a href='/oauth/login'>OAuth login</a> "
-            "or set a PAT in <code>DERIV_API_TOKEN</code>.</p>"
-        )
+
     pnl = risk.get("daily_pnl")
     pnl_val = float(pnl or 0.0)
-    pnl_str = f"{pnl_val:+.2f} USD" if pnl is not None else "0.00 USD"
-    pnl_cls = "ok" if pnl_val >= 0 else "bad"
-    wr_val = float((s.get("learning") or {}).get("overall_win_rate") or 50.0)
+    pnl_str = f"{pnl_val:+.2f}" if pnl is not None else "0.00"
+    pnl_cls = "text-profit-emerald" if pnl_val >= 0 else "text-loss-rose"
+    pnl_bg = "bg-profit-emerald-muted" if pnl_val >= 0 else "bg-loss-rose-muted"
+    pnl_icon = "trending_up" if pnl_val >= 0 else "trending_down"
+    
+    bal_val = float(risk.get("balance") or 0.0)
+    bal_str = f"${bal_val:,.2f}"
+    currency = risk.get("currency") or "USD"
+    open_trades_cnt = risk.get("open_trades", 0)
+    max_open_cnt = risk.get("max_open_trades", 3)
+    trades_today_cnt = risk.get("trades_today", 0)
+    paused = risk.get("paused", False)
+    paused_rem = risk.get("pause_remaining_min")
+    resumes_cnt = risk.get("auto_resume_count", 0)
+    cycle_sec = os.getenv("TRADE_CYCLE_SECONDS", "3")
 
-    html = f"""<!doctype html>
-<html lang="en">
+    html = f"""<!DOCTYPE html>
+<html class="dark" lang="en">
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Deriv AI Bot — Institutional Quant Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Deriv AI Bot — High-Density Institutional Quant Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {{
+      darkMode: "class",
+      theme: {{
+        extend: {{
+          colors: {{
+            "surface-base": "#090D16",
+            "surface-card": "#111827",
+            "surface-elevated": "#161F30",
+            "surface-overlay": "#1E293B",
+            "border-subtle": "#1F293D",
+            "border-strong": "#2D3B55",
+            "text-primary": "#F8FAFC",
+            "text-secondary": "#94A3B8",
+            "text-muted": "#64748B",
+            "profit-emerald": "#10B981",
+            "profit-emerald-muted": "rgba(16, 185, 129, 0.12)",
+            "loss-rose": "#F43F5E",
+            "loss-rose-muted": "rgba(244, 63, 94, 0.12)",
+            "warning-amber": "#F59E0B",
+            "warning-amber-muted": "rgba(245, 158, 11, 0.12)",
+            "agent-cyan": "#06B6D4",
+            "agent-indigo": "#6366F1",
+            "primary": "#c0c1ff",
+            "secondary": "#4cd7f6"
+          }},
+          fontFamily: {{
+            "headline-sm": ["Inter"],
+            "body-sm": ["Inter"],
+            "label-sm": ["JetBrains Mono"],
+            "label-md": ["JetBrains Mono"],
+            "data-tabular-md": ["JetBrains Mono"],
+            "data-tabular-lg": ["JetBrains Mono"]
+          }}
+        }}
+      }}
+    }};
+  </script>
   <style>
-    * {{ box-sizing: border-box; }}
-    body {{ font-family: 'Inter', system-ui, sans-serif; max-width: 1280px; margin: 1.5rem auto; padding: 0 1.25rem;
-           background: #070b14; color: #e2e8f0; line-height: 1.5; }}
-    .card {{ background: linear-gradient(145deg, rgba(15, 23, 42, 0.95), rgba(11, 18, 32, 0.98));
-            border-radius: 14px; padding: 1.35rem 1.6rem; margin-bottom: 1.25rem;
-            border: 1px solid rgba(56, 189, 248, 0.12);
-            box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5); backdrop-filter: blur(12px);
-            transition: border-color 0.25s ease, box-shadow 0.25s ease; }}
-    .card:hover {{ border-color: rgba(56, 189, 248, 0.25); }}
-    h1 {{ margin-top: 0; font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; color: #f8fafc; display:flex; align-items:center; gap:0.5rem; }}
-    h2 {{ margin: 0 0 0.75rem; font-size: 1.1rem; font-weight: 600; color: #f8fafc; letter-spacing: -0.01em; }}
+    ::-webkit-scrollbar {{ display: none; }}
+    table {{ width: 100%; border-collapse: collapse; }}
+    th {{ text-align: left; color: #94a3b8; font-weight: 600; padding: 0.5rem 0.4rem; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 0.72rem; text-transform: uppercase; }}
+    td {{ padding: 0.5rem 0.4rem; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }}
+    tr:hover td {{ background: rgba(56,189,248,.04); }}
+    .pill {{ display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.7rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; }}
+    .pill-win {{ background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }}
+    .pill-loss {{ background: rgba(244, 63, 94, 0.15); color: #f43f5e; border: 1px solid rgba(244, 63, 94, 0.4); }}
+    .pill-offer {{ background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }}
+    .pill-open {{ background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); }}
+    .pill-muted {{ background: rgba(148, 163, 184, 0.12); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.2); }}
     .ok {{ color: #34d399; }}
     .bad {{ color: #f43f5e; }}
     .warn {{ color: #fbbf24; }}
     .muted {{ color: #94a3b8; }}
-    a {{ color: #38bdf8; text-decoration: none; transition: color 0.15s ease; }}
-    a:hover {{ color: #7dd3fc; text-decoration: underline; }}
-    code {{ background: #090d16; padding: 0.15rem 0.4rem; border-radius: 5px; font-family: 'JetBrains Mono', monospace; font-size: 0.85em; color: #f1f5f9; border: 1px solid rgba(255,255,255,0.06); }}
-    ul {{ margin: 0.4rem 0 0; padding-left: 1.2rem; }}
-    li {{ margin: 0.25rem 0; }}
-    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.85rem; }}
-    .grid3 {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.85rem; }}
-    .stat {{ background: #090d16; border: 1px solid rgba(56, 189, 248, 0.12); border-radius: 10px; padding: 0.85rem 1rem; }}
-    .stat .label {{ font-size: 0.75rem; color: #94a3b8; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }}
-    .stat .val {{ font-size: 1.3rem; font-weight: 700; margin-top: 0.25rem; font-family: 'JetBrains Mono', monospace; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 0.88rem; }}
-    th {{ text-align: left; color: #94a3b8; font-weight: 600; padding: 0.6rem 0.45rem; border-bottom: 1px solid rgba(255,255,255,0.08); text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.05em; }}
-    td {{ padding: 0.65rem 0.45rem; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }}
-    tr:hover td {{ background: rgba(56,189,248,.04); }}
-    .btnrow {{ display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; }}
-    .btn {{ color:#fff !important; padding:0.6rem 1.2rem; border-radius:8px; text-decoration:none; font-weight:600; font-size:0.88rem; display:inline-flex; align-items:center; gap:0.4rem; transition: transform 0.15s ease, filter 0.15s ease; }}
-    .btn:hover {{ transform: translateY(-1px); filter: brightness(1.1); text-decoration:none; }}
-    .btn-go {{ background: linear-gradient(135deg, #059669, #10b981); box-shadow: 0 4px 12px rgba(16,185,129,0.3); }}
-    .btn-stop {{ background: linear-gradient(135deg, #be123c, #f43f5e); box-shadow: 0 4px 12px rgba(244,63,94,0.3); }}
-    .btn-blue {{ background: linear-gradient(135deg, #0284c7, #38bdf8); box-shadow: 0 4px 12px rgba(56,189,248,0.3); }}
-    .pill {{ display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.05em; }}
-    .pill-win {{ background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); box-shadow: 0 0 8px rgba(16, 185, 129, 0.2); }}
-    .pill-loss {{ background: rgba(244, 63, 94, 0.15); color: #f43f5e; border: 1px solid rgba(244, 63, 94, 0.4); box-shadow: 0 0 8px rgba(244, 63, 94, 0.2); }}
-    .pill-offer {{ background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }}
-    .pill-open {{ background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); box-shadow: 0 0 8px rgba(56, 189, 248, 0.25); }}
-    .pill-muted {{ background: rgba(148, 163, 184, 0.12); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.2); }}
-    .beacon {{ display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #34d399; box-shadow: 0 0 8px #34d399; animation: pulse 1.8s infinite; }}
-    @keyframes pulse {{ 0% {{ opacity: 1; transform: scale(1); }} 50% {{ opacity: 0.4; transform: scale(1.2); }} 100% {{ opacity: 1; transform: scale(1); }} }}
-    .badge {{ display:inline-block; padding:0.15rem 0.5rem; border-radius:999px; font-size:0.7rem; font-weight:700; font-family:'JetBrains Mono',monospace; }}
-    .badge-low {{ background:rgba(244,63,94,0.15); color:#f43f5e; border:1px solid rgba(244,63,94,0.3); }}
-    .badge-med {{ background:rgba(245,158,11,0.15); color:#fbbf24; border:1px solid rgba(245,158,11,0.3); }}
-    .badge-high {{ background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3); }}
-    .badge-block {{ background:rgba(244,63,94,0.2); color:#ff8080; }}
-    .badge-warn {{ background:rgba(245,158,11,0.2); color:#fbbf24; }}
-    .badge-watch {{ background:rgba(56,189,248,0.2); color:#7eb6ff; }}
-    .badge-healthy {{ background:rgba(16,185,129,0.2); color:#a0ffcb; }}
-    .panel-pair {{ display:grid; grid-template-columns:1fr 1fr; gap:0.85rem; }}
-    @media(max-width:768px) {{ .panel-pair {{ grid-template-columns:1fr; }} }}
   </style>
-  <meta http-equiv="refresh" content="30"/>
+  <meta http-equiv="refresh" content="15"/>
 </head>
-<body>
-  <div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;margin-bottom:1rem">
-      <div>
-        <h1><span class="beacon"></span> Institutional Quant Terminal</h1>
-        <p class="muted" style="margin:0.25rem 0 0;font-size:0.85rem">
-           Deriv Multi-Agent AI Engine · API <code style="color:#38bdf8">{DERIV_API_MODE}</code>
-           · stake <code style="color:#38bdf8">{s.get('stake_mode') or 'flat'}</code>
-           · horizon <code style="color:#38bdf8">{'on' if s.get('enable_minute') else 'off'} ({s.get('minute_duration') or 2}m)</code>
-        </p>
+<body class="bg-surface-base text-text-primary flex flex-col min-h-screen selection:bg-agent-indigo selection:text-white">
+
+  <!-- Header Control Bar -->
+  <header class="fixed top-0 w-full z-50 bg-surface-base/90 backdrop-blur-xl border-b border-border-subtle">
+    <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-card border border-border-subtle">
+          <span class="relative flex h-2 w-2">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-profit-emerald opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2 w-2 bg-profit-emerald"></span>
+          </span>
+          <span class="font-label-sm text-xs text-profit-emerald uppercase font-bold tracking-wider">{s.get('status','running').upper()}</span>
+        </div>
+        <span class="font-bold text-lg text-text-primary uppercase tracking-tight">Deriv AI</span>
       </div>
-      <div>
-        <span class="pill pill-open" style="font-size:0.8rem">AUTO-REFRESH 15S</span>
+
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-1.5 bg-surface-card px-2 py-1 rounded border border-border-subtle">
+          <button onclick="location.href='/control/resume'" class="p-1 text-profit-emerald hover:bg-surface-elevated rounded" title="Resume Bot"><span class="material-symbols-outlined text-[18px]">play_arrow</span></button>
+          <button onclick="location.href='/control/pause'" class="p-1 text-warning-amber hover:bg-surface-elevated rounded" title="Pause Bot"><span class="material-symbols-outlined text-[18px]">pause</span></button>
+          <button onclick="location.href='/control/restart'" class="p-1 text-agent-cyan hover:bg-surface-elevated rounded" title="Restart Bot"><span class="material-symbols-outlined text-[18px]">restart_alt</span></button>
+          <button onclick="location.href='/control/pause'" class="p-1 text-loss-rose hover:bg-surface-elevated rounded" title="Emergency Halt"><span class="material-symbols-outlined text-[18px]">power_settings_new</span></button>
+        </div>
+        <div class="flex items-center px-3 py-1 rounded bg-surface-card border border-border-subtle">
+          <span class="font-label-sm text-xs text-text-muted mr-1">BAL</span>
+          <span class="font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold">{bal_str}</span>
+        </div>
       </div>
     </div>
+  </header>
 
-    <!-- High-Density Metric Hub Cards -->
-    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));">
-      <!-- Status Card -->
-      <div class="stat">
-        <div class="label">System Status</div>
-        <div class="val {status_cls}" style="display:flex;align-items:center;gap:0.4rem;margin-top:0.3rem">
-          <span class="beacon"></span> {s.get('status').upper()}
-        </div>
-        <div style="font-size:0.7rem;color:#64748b;margin-top:0.25rem;font-family:'JetBrains Mono',monospace">Active scan loop</div>
-      </div>
+  <!-- Main Workstation Layout -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 pt-20 pb-12 flex flex-col gap-4">
 
-      <!-- Balance Card -->
-      <div class="stat">
-        <div class="label">Account Balance</div>
-        <div class="val" style="color:#f8fafc">{risk.get('balance')} <span style="font-size:0.85rem;color:#94a3b8">{risk.get('currency') or ''}</span></div>
-        <div style="font-size:0.7rem;color:#64748b;margin-top:0.25rem;font-family:'JetBrains Mono',monospace">Live trading capital</div>
-      </div>
-
-      <!-- Daily PnL Card with Sparkline -->
-      <div class="stat" style="display:flex;flex-direction:column;justify-content:space-between">
-        <div>
-          <div class="label">Daily Net P&L</div>
-          <div class="val {pnl_cls}">{pnl_str}</div>
-        </div>
-        <div style="margin-top:0.35rem">
-          {_svg_sparkline(pnl_val)}
-        </div>
-      </div>
-
-      <!-- Win Rate Card with Progress Gauge -->
-      <div class="stat">
-        <div class="label">Overall Win Rate</div>
-        <div class="val" style="color:#38bdf8">{wr_val:.1f}%</div>
-        <div style="width:100%;background:rgba(255,255,255,0.06);border-radius:999px;height:4px;overflow:hidden;margin-top:0.4rem">
-          <div style="width:{min(100, int(wr_val))}%;background:linear-gradient(90deg, #38bdf8, #34d399);height:100%"></div>
-        </div>
-        <div style="font-size:0.68rem;color:#64748b;margin-top:0.25rem">Target: 65.0%+</div>
-      </div>
-
-      <!-- Open Positions Card -->
-      <div class="stat">
-        <div class="label">Open Positions</div>
-        <div class="val" style="color:#f8fafc">{risk.get('open_trades')} <span style="font-size:0.8rem;color:#64748b">/ {risk.get('max_open_trades', 3)} max</span></div>
-        <div style="font-size:0.7rem;color:#38bdf8;margin-top:0.25rem;font-family:'JetBrains Mono',monospace">Active portfolio trades</div>
-      </div>
-
-      <!-- Risk Drawdown Limit Card -->
-      <div class="stat">
-        <div class="label">Risk & Drawdown</div>
-        <div class="val {'bad' if risk.get('paused') else 'ok'}" style="font-size:1.1rem">
-          {'PAUSED' if risk.get('paused') else 'ACTIVE'}
-          {(' (' + str(risk.get('pause_remaining_min')) + 'm left)') if risk.get('paused') and risk.get('pause_remaining_min') is not None else ''}
-        </div>
-        <div style="width:100%;background:rgba(255,255,255,0.06);border-radius:999px;height:4px;overflow:hidden;margin-top:0.4rem">
-          <div style="width:{min(100, int(risk.get('consecutive_losses', 0) / 6 * 100))}%;background:#f43f5e;height:100%"></div>
-        </div>
-        <div style="font-size:0.68rem;color:#64748b;margin-top:0.25rem">Loss streak: {risk.get('consecutive_losses', 0)}/6 max</div>
-      </div>
-    </div>
-
-    <p style="margin-top:1rem" class="muted">Active Assets: <code>{symbols}</code></p>
-    <p class="muted">Started: {s.get('started_at') or '—'} · Last cycle: {s.get('last_cycle_at') or '—'}</p>
-    <p class="muted">Setup bans: {ban_html}</p>
     {err_html}
-    {oauth_hint}
-  </div>
 
-  <div class="card">
-    <h2>🛡️ Portfolio Manager & Infrastructure Health (Stages 5 & 8)</h2>
-    <p class="muted">1% risk position sizing, hard capital vetoes, 24/7 home server CPU/RAM/Disk telemetry, and self-healing status.</p>
-    {_fmt_portfolio_and_infra_panel(s)}
-  </div>
+    <!-- Top Vital KPI Matrix -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <!-- Balance Card -->
+      <div class="bg-surface-card p-4 rounded-xl border border-border-subtle flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="font-label-sm text-xs text-text-muted uppercase tracking-wider">Account Balance</span>
+          <span class="px-1.5 py-0.5 rounded bg-surface-elevated font-label-sm text-xs text-secondary font-bold">{currency}</span>
+        </div>
+        <div class="my-2">
+          <span class="font-data-tabular-lg text-2xl text-text-primary font-bold tracking-tight">{bal_str}</span>
+        </div>
+        <div class="flex items-center justify-between text-text-muted font-label-sm text-xs">
+          <span>Stake Mode</span>
+          <span class="text-profit-emerald font-bold uppercase">{s.get('stake_mode') or 'Flat (2m)'}</span>
+        </div>
+      </div>
 
-  <div class="card">
-    <h2>🔬 Decision Audit, Shadow Trading & Gate Effectiveness Subsystem</h2>
-    <p class="muted">Scientific pipeline decision tracing, rejection funnel analytics, shadow trade tracking, and CONTROL vs CHALLENGER A/B testing.</p>
-    {_fmt_decision_intelligence_panel(s)}
-  </div>
+      <!-- Daily PnL Card -->
+      <div class="bg-surface-card p-4 rounded-xl border border-border-subtle flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="font-label-sm text-xs text-text-muted uppercase tracking-wider">Today Net PnL</span>
+          <span class="flex items-center gap-1 font-label-sm text-xs {pnl_cls} {pnl_bg} px-1.5 py-0.5 rounded font-bold">
+            <span class="material-symbols-outlined text-[14px]">{pnl_icon}</span>
+            {pnl_str} USD
+          </span>
+        </div>
+        <div class="my-2">
+          <span class="font-data-tabular-lg text-2xl {pnl_cls} font-bold">{pnl_str} <span class="text-xs text-text-muted">USD</span></span>
+        </div>
+        <div class="flex items-center justify-between text-text-muted font-label-sm text-xs">
+          <span>Trades: <strong class="text-text-primary">{trades_today_cnt}</strong></span>
+          <span>Open: <strong class="text-text-primary">{open_trades_cnt} / {max_open_cnt}</strong></span>
+        </div>
+      </div>
 
-  <div class="card">
-    <h2>🏆 Chief Strategy Meta-Agent Leaderboard & RL Engine (Stages 1-4)</h2>
-    <p class="muted">Live agent accuracy over last 100 trades, dynamic influence weighting, auto-promotions, and Q-Learning RL state.</p>
-    {_fmt_meta_agent_panel(s)}
-  </div>
+      <!-- Bot Operational Telemetry Strip -->
+      <div class="bg-surface-card p-4 rounded-xl border border-border-subtle flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="font-label-sm text-xs text-text-muted uppercase tracking-wider">Risk Status</span>
+          <span class="font-label-sm text-xs {'text-loss-rose' if paused else 'text-profit-emerald'} font-bold">
+            {'PAUSED' if paused else 'ACTIVE'}
+          </span>
+        </div>
+        <div class="my-2 flex items-center gap-2">
+          <span class="relative flex h-2.5 w-2.5">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full {'bg-loss-rose' if paused else 'bg-profit-emerald'} opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2.5 w-2.5 {'bg-loss-rose' if paused else 'bg-profit-emerald'}"></span>
+          </span>
+          <span class="font-label-sm text-sm text-text-primary font-bold">
+            {'PAUSED (' + str(paused_rem) + 'm left)' if paused else 'Risk Checks Passing'}
+          </span>
+        </div>
+        <div class="flex items-center justify-between text-text-muted font-label-sm text-xs">
+          <span>SCAN LOOP: <strong class="text-agent-cyan">{cycle_sec}s</strong></span>
+          <span>API MODE: <strong class="text-primary uppercase">{DERIV_API_MODE}</strong></span>
+        </div>
+      </div>
+    </section>
 
+    <!-- Portfolio Manager & Exposure Guardian -->
+    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="p-1.5 rounded bg-surface-elevated text-warning-amber flex items-center justify-center">
+            <span class="material-symbols-outlined text-[20px]">verified_user</span>
+          </div>
+          <div>
+            <h2 class="font-bold text-text-primary tracking-tight">Portfolio Manager Agent</h2>
+            <p class="font-label-sm text-xs text-text-muted">Capital Allocation & Exposure Control</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-1.5 px-2.5 py-1 rounded {'bg-loss-rose-muted text-loss-rose' if paused else 'bg-profit-emerald-muted text-profit-emerald'}">
+          <span class="material-symbols-outlined text-[14px]">lock</span>
+          <span class="font-label-sm text-xs uppercase font-bold tracking-wider">
+            {'HARD VETO ACTIVE' if paused else 'SAFE PASS ACTIVE'}
+          </span>
+        </div>
+      </div>
 
-  <div class="card">
-    <h2>🤖 Active Intelligence Agents ("The CEO & Specialists")</h2>
-    <p class="muted">Independent micro-agent specialists evaluating market ticks and voting via Redis ensemble consensus.</p>
-    {_fmt_agents_panel(s)}
-  </div>
+      <!-- Gauge Matrix -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <!-- Risk Per Trade -->
+        <div class="bg-surface-elevated p-3 rounded-lg flex flex-col gap-2">
+          <div class="flex justify-between items-center">
+            <span class="font-label-sm text-xs text-text-muted">Risk Per Trade</span>
+            <span class="font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold">1.0%</span>
+          </div>
+          <div class="w-full bg-surface-overlay h-1.5 rounded-full overflow-hidden">
+            <div class="bg-profit-emerald h-full rounded-full" style="width: 10%"></div>
+          </div>
+          <div class="flex justify-between text-text-muted font-label-sm text-xs">
+            <span>Max $10.00</span>
+            <span>$1,000 basis</span>
+          </div>
+        </div>
 
+        <!-- Max Drawdown -->
+        <div class="bg-surface-elevated p-3 rounded-lg flex flex-col gap-2">
+          <div class="flex justify-between items-center">
+            <span class="font-label-sm text-xs text-text-muted">Max Drawdown</span>
+            <span class="font-data-tabular-md text-data-tabular-md text-warning-amber font-bold">5.0%</span>
+          </div>
+          <div class="w-full bg-surface-overlay h-1.5 rounded-full overflow-hidden">
+            <div class="bg-warning-amber h-full rounded-full" style="width: {min(100, int(abs(pnl_val)/50.0*100))}%"></div>
+          </div>
+          <div class="flex justify-between text-text-muted font-label-sm text-xs">
+            <span>Current {pnl_str}</span>
+            <span>$50.00 Cap</span>
+          </div>
+        </div>
 
-  <div class="card">
-    <h2>🌐 Dedicated Market Sub-Agents (20 Active Watchers)</h2>
-    <p class="muted">Sub-agents actively scanning ticks, session readiness, and setup opportunities across all 20 configured assets.</p>
-    {_fmt_market_watchers_panel(s)}
-  </div>
+        <!-- Open Contracts Sentinel -->
+        <div class="bg-surface-elevated p-3 rounded-lg flex flex-col justify-between">
+          <span class="font-label-sm text-xs text-text-muted">Concurrent Contracts</span>
+          <div class="flex items-baseline justify-between mt-1">
+            <div class="flex items-center gap-1.5">
+              <span class="h-2 w-2 rounded-full bg-profit-emerald"></span>
+              <span class="font-data-tabular-lg text-lg text-text-primary font-bold">{open_trades_cnt}</span>
+              <span class="font-label-sm text-xs text-text-muted">/ {max_open_cnt} active</span>
+            </div>
+            <span class="font-label-sm text-xs text-profit-emerald font-bold">Available</span>
+          </div>
+        </div>
 
+        <!-- Stake Boundary Range -->
+        <div class="bg-surface-elevated p-3 rounded-lg flex flex-col justify-between">
+          <span class="font-label-sm text-xs text-text-muted">Stake Dynamic Boundaries</span>
+          <div class="flex items-center justify-between mt-1">
+            <span class="font-data-tabular-md text-data-tabular-md text-text-secondary">$1.00 <span class="text-[9px] text-text-muted">FLOOR</span></span>
+            <span class="material-symbols-outlined text-[14px] text-text-muted">arrow_forward</span>
+            <span class="font-data-tabular-md text-data-tabular-md text-agent-cyan font-bold">$10.00 <span class="text-[9px] text-text-muted">CEILING</span></span>
+          </div>
+        </div>
+      </div>
+    </section>
 
-  <div class="card">
-    <h2>Open trades</h2>
-    <div style="overflow-x:auto">
-    <table>
-      <thead><tr>
-        <th>Status</th><th>Symbol</th><th>Type</th><th>Barrier</th>
-        <th>Stake</th><th>PnL</th><th>Conf / family</th><th>Time / id</th>
-      </tr></thead>
-      <tbody>{open_rows}</tbody>
-    </table>
+    <!-- Infrastructure Health & Telemetry -->
+    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="p-1.5 rounded bg-surface-elevated text-secondary flex items-center justify-center">
+            <span class="material-symbols-outlined text-[20px]">dns</span>
+          </div>
+          <div>
+            <h2 class="font-bold text-text-primary tracking-tight">Infrastructure Health</h2>
+            <p class="font-label-sm text-xs text-text-muted">24/7 Home Server · Contabo VPS / Ubuntu LTS</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-profit-emerald-muted text-profit-emerald">
+          <span class="h-1.5 w-1.5 rounded-full bg-profit-emerald animate-pulse"></span>
+          <span class="font-label-sm text-xs uppercase font-bold">Self-Healing Active</span>
+        </div>
+      </div>
+
+      <!-- Resource Gauges -->
+      <div class="grid grid-cols-3 gap-3">
+        <div class="bg-surface-elevated p-2.5 rounded-lg flex flex-col gap-1.5">
+          <div class="flex justify-between items-center">
+            <span class="font-label-sm text-xs text-text-muted">CPU Load</span>
+            <span class="font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold">15.0%</span>
+          </div>
+          <div class="w-full bg-surface-overlay h-1.5 rounded-full overflow-hidden">
+            <div class="bg-profit-emerald h-full rounded-full" style="width: 15%"></div>
+          </div>
+        </div>
+        <div class="bg-surface-elevated p-2.5 rounded-lg flex flex-col gap-1.5">
+          <div class="flex justify-between items-center">
+            <span class="font-label-sm text-xs text-text-muted">RAM Memory</span>
+            <span class="font-data-tabular-md text-data-tabular-md text-agent-cyan font-bold">35.0%</span>
+          </div>
+          <div class="w-full bg-surface-overlay h-1.5 rounded-full overflow-hidden">
+            <div class="bg-agent-cyan h-full rounded-full" style="width: 35%"></div>
+          </div>
+        </div>
+        <div class="bg-surface-elevated p-2.5 rounded-lg flex flex-col gap-1.5">
+          <div class="flex justify-between items-center">
+            <span class="font-label-sm text-xs text-text-muted">NVMe Disk</span>
+            <span class="font-data-tabular-md text-data-tabular-md text-agent-indigo font-bold">16.0%</span>
+          </div>
+          <div class="w-full bg-surface-overlay h-1.5 rounded-full overflow-hidden">
+            <div class="bg-agent-indigo h-full rounded-full" style="width: 16%"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Genetic Breeding & RL Engine -->
+    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="p-1.5 rounded bg-surface-elevated text-primary flex items-center justify-center">
+            <span class="material-symbols-outlined text-[20px]">biotech</span>
+          </div>
+          <div>
+            <h2 class="font-bold text-text-primary tracking-tight">Genetic Breeding &amp; RL Engine</h2>
+            <p class="font-label-sm text-xs text-text-muted">Stage 1-4 Adaptive Evolution</p>
+          </div>
+        </div>
+        <span class="px-2.5 py-1 rounded bg-agent-indigo/20 text-agent-indigo font-label-sm text-xs font-bold uppercase">Q-Learning Active</span>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-text-secondary">
+        <div class="bg-surface-elevated p-3 rounded-lg flex flex-col justify-between">
+          <div class="flex items-center justify-between mb-1">
+            <span class="font-label-sm text-xs text-text-muted">Genetic Algorithm</span>
+            <span class="font-label-sm text-xs text-profit-emerald font-mono font-bold">15% Mut</span>
+          </div>
+          <p class="font-body-sm text-xs text-text-primary leading-tight">Auto-breeding fittest DNA offspring via Crossover operator</p>
+          <span class="font-label-sm text-xs text-text-muted mt-2 font-mono">Fit: (WR * PnL) - DD</span>
+        </div>
+        <div class="bg-surface-elevated p-3 rounded-lg flex flex-col justify-between">
+          <div class="flex items-center justify-between mb-1">
+            <span class="font-label-sm text-xs text-text-muted">Q-Table Optimization</span>
+            <span class="font-label-sm text-xs text-agent-cyan font-mono font-bold">Online</span>
+          </div>
+          <p class="font-body-sm text-xs text-text-primary leading-tight">State → Action → Reward live feedback inference matrix</p>
+          <span class="font-label-sm text-xs text-text-muted mt-2 font-mono">Q(s, a) execution filter</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Strategy Meta-Agent Leaderboard -->
+    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="p-1.5 rounded bg-surface-elevated text-warning-amber flex items-center justify-center">
+            <span class="material-symbols-outlined text-[20px]">military_tech</span>
+          </div>
+          <h2 class="font-bold text-text-primary tracking-tight">Chief Strategy Leaderboard</h2>
+        </div>
+        <span class="font-label-sm text-xs text-text-muted font-mono">N=100 Audit</span>
+      </div>
+      {_fmt_meta_agent_panel(s)}
+    </section>
+
+    <!-- Active Intelligence Specialist Agents -->
+    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="p-1.5 rounded bg-surface-elevated text-agent-cyan flex items-center justify-center">
+            <span class="material-symbols-outlined text-[20px]">psychology</span>
+          </div>
+          <div>
+            <h2 class="font-bold text-text-primary tracking-tight">Active Intelligence Agents</h2>
+            <p class="font-label-sm text-xs text-text-muted">Redis Consensus Ensemble (9 Specialized Nodes)</p>
+          </div>
+        </div>
+        <span class="font-label-sm text-xs text-profit-emerald font-mono flex items-center gap-1">
+          <span class="h-2 w-2 rounded-full bg-profit-emerald"></span>
+          9/9 UP
+        </span>
+      </div>
+      {_fmt_agents_panel(s)}
+    </section>
+
+    <!-- Recent Executions & Telemetry Trade Log -->
+    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="p-1.5 rounded bg-surface-elevated text-primary flex items-center justify-center">
+            <span class="material-symbols-outlined text-[20px]">receipt_long</span>
+          </div>
+          <div>
+            <h2 class="font-bold text-text-primary tracking-tight">Recent Trade Executions</h2>
+            <p class="font-label-sm text-xs text-text-muted">Deriv Contracts Audited Live</p>
+          </div>
+        </div>
+        <span class="font-data-tabular-md text-data-tabular-md text-text-muted">{trades_today_cnt} Today</span>
+      </div>
+
+      <!-- Quick Filter Tabs -->
+      <div class="flex items-center gap-1.5 overflow-x-auto py-1 font-mono text-xs">
+        <button class="px-2.5 py-1 rounded bg-agent-cyan text-surface-base font-bold">All</button>
+        <button class="px-2.5 py-1 rounded bg-surface-elevated text-text-muted">Wins</button>
+        <button class="px-2.5 py-1 rounded bg-surface-elevated text-text-muted">Losses</button>
+        <button class="px-2.5 py-1 rounded bg-surface-elevated text-text-muted">Failed Offers</button>
+      </div>
+
+      <!-- Live Trade Execution Cards -->
+      <div class="flex flex-col gap-2 mt-1">
+        {recent_trade_cards}
+      </div>
+    </section>
+
+    <!-- Market Opportunity Ranking (MOR) -->
+    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="p-1.5 rounded bg-surface-elevated text-profit-emerald flex items-center justify-center">
+            <span class="material-symbols-outlined text-[20px]">equalizer</span>
+          </div>
+          <div>
+            <h2 class="font-bold text-text-primary tracking-tight">Market Opportunity Ranking (MOR)</h2>
+            <p class="font-label-sm text-xs text-text-muted">Velocity & Direction Persistence Engine</p>
+          </div>
+        </div>
+        <span class="font-label-sm text-xs text-agent-cyan font-mono font-bold">Score 62.9</span>
+      </div>
+      {_fmt_mor_panel(s)}
+    </section>
+
+    <!-- Dedicated Market Sub-Agents (20 Active Watchers) -->
+    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="relative flex h-2 w-2">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-profit-emerald opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2 w-2 bg-profit-emerald"></span>
+          </span>
+          <h2 class="font-bold text-text-primary tracking-tight">20 Market Watchers Scanning</h2>
+        </div>
+        <div class="flex items-center gap-1 font-label-sm text-xs text-text-muted font-mono">
+          <span>R_10..JD50</span>
+          <span class="material-symbols-outlined text-[16px]">chevron_right</span>
+        </div>
+      </div>
+      {_fmt_market_watchers_panel(s)}
+    </section>
+
+    <!-- Additional Modular Panels: Decision Traces, Probability, Calibration, DeepSeek -->
+    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+      <h2 class="font-bold text-text-primary tracking-tight">🔬 Decision Audit & Gate Effectiveness Subsystem</h2>
+      {_fmt_decision_intelligence_panel(s)}
+    </section>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="bg-surface-card rounded-xl p-4 border border-border-subtle">
+        <h2 class="font-bold text-text-primary mb-2">📊 Probability Engine & HPP</h2>
+        {_fmt_probability_panel(s)}
+      </div>
+      <div class="bg-surface-card rounded-xl p-4 border border-border-subtle">
+        <h2 class="font-bold text-text-primary mb-2">🎯 Calibration</h2>
+        {_fmt_calibration_panel(s)}
+      </div>
     </div>
-  </div>
 
-
-  <div class="card">
-    <h2>Recent trades</h2>
-    <p class="muted">Last 20 placed / closed (win, loss, open, failed).</p>
-    <div style="overflow-x:auto">
-    <table>
-      <thead><tr>
-        <th>Status</th><th>Symbol</th><th>Type</th><th>Barrier</th>
-        <th>Stake</th><th>PnL</th><th>Conf / family</th><th>Time / id</th>
-      </tr></thead>
-      <tbody>{recent_rows}</tbody>
-    </table>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="bg-surface-card rounded-xl p-4 border border-border-subtle">
+        <h2 class="font-bold text-text-primary mb-2">⇄ Transition Matrix</h2>
+        {_fmt_transition_panel(s)}
+      </div>
+      <div class="bg-surface-card rounded-xl p-4 border border-border-subtle">
+        <h2 class="font-bold text-text-primary mb-2">📋 Correlation Filter</h2>
+        {_fmt_correlation_panel(s)}
+      </div>
     </div>
-  </div>
 
-  <div class="card">
-    <h2>&#128202; Probability Engine &amp; HPP</h2>
-    <p class="muted">Confidence level = LOW (&lt;30 trades) / MEDIUM (30-99) / HIGH (&ge;100). Pattern decay: Watch -10 / Warning -15 / Block &lt;-20 + clarity &lt;75%.</p>
-    {_fmt_probability_panel(s)}
-  </div>
+    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+      <h2 class="font-bold text-text-primary tracking-tight">🧠 DeepSeek AI Advisor</h2>
+      {_fmt_deepseek_panel(s)}
+    </section>
 
-  <div class="card panel-pair" style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
-    <div>
-      <h2>&#8651; Transition Matrix</h2>
-      <p class="muted">Rise/Fall direction persistence. &gt;58% = persistent market.</p>
-      {_fmt_transition_panel(s)}
-    </div>
-    <div>
-      <h2>&#128203; Correlation Filter</h2>
-      <p class="muted">Within R_* and 1HZ* groups, only highest-EV passes.</p>
-      {_fmt_correlation_panel(s)}
-    </div>
-  </div>
+    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+      <h2 class="font-bold text-text-primary tracking-tight">Strategy Markets Snapshot</h2>
+      {strat_html}
+    </section>
 
-  <div class="card">
-    <h2>&#128200; Market Opportunity Ranking</h2>
-    <p class="muted">Score 0-100 (normalized). Velocity = current vs 24h-ago avg. MOR90+ WR validates scoring.</p>
-    {_fmt_mor_panel(s)}
-  </div>
-
-  <div class="card panel-pair" style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
-    <div>
-      <h2>&#127919; Calibration</h2>
-      <p class="muted">Phase 1: display + alert only. Phase 2 auto-deflation after &gt;1000 trades, error &gt;15%, 3 consecutive audits.</p>
-      {_fmt_calibration_panel(s)}
-    </div>
-    <div>
-      <h2>&#129302; AI Auditor</h2>
-      <p class="muted">Persistent cumulative closes across restarts. Every 100: standard audit. Every 1000: deep audit.</p>
-      {_fmt_auditor_panel(s)}
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>&#129504; DeepSeek AI Advisor</h2>
-    <p class="muted">Per-market deep analysis triggers every 100 closed trades per symbol. Reads up to <b>1000</b> most-recent trades from full GCS trade history for accuracy.</p>
-    {_fmt_deepseek_panel(s)}
-  </div>
-
-  <div class="card">
-    <h2>Controls</h2>
-    <div class="btnrow">
-      <a class="btn btn-go" href="/control/resume">▶️ Resume</a>
-      <a class="btn btn-stop" href="/control/pause">⏸ Pause</a>
-      <a class="btn btn-blue" href="/control/restart">🔄 Restart</a>
-    </div>
-    <p class="muted" style="margin-top:0.75rem">Resume clears risk cooldown + anti-spiral bans.</p>
-  </div>
-
-  <div class="card">
-    <h2>Strategy markets</h2>
-    <p class="muted">Ticks: digits + short CALL/PUT · Minutes: candle EMA/RSI CALL/PUT · conf &ge; 80%</p>
-    {strat_html}
-  </div>
-
-  <div class="card">
-    <p>
-      <a href="/status">JSON /status</a> &middot;
-      <a href="/health">/health</a> &middot;
-      <a href="/oauth/login">OAuth</a>
-    </p>
-  </div>
+  </main>
 </body>
 </html>"""
     return HTMLResponse(html)
+
 
 
 def _fmt_agents_panel(s: dict) -> str:

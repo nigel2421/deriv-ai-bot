@@ -89,10 +89,11 @@ def main():
     run_ssh_cmd(ssh, f"bash {TARGET_DIR}/scripts/vps_setup.sh")
 
     # 4. Build and run Docker Compose containers
-    print("[INFO] Starting Docker Compose stack...")
-    # Add /usr/bin and /usr/local/bin to PATH explicitly in case environment PATH needs it
-    cmd_docker = f"export PATH=$PATH:/usr/bin:/usr/local/bin && cd {TARGET_DIR} && docker compose up --build -d"
+    print("[INFO] Rebuilding and restarting Docker Compose stack...")
+    # Force recreate to ensure API dashboard container picks up latest src/cloud_app.py
+    cmd_docker = f"export PATH=$PATH:/usr/bin:/usr/local/bin && cd {TARGET_DIR} && docker compose down && docker compose up --build --force-recreate -d"
     run_ssh_cmd(ssh, cmd_docker)
+
 
     # 5. Check container status
     print("\n================================================================")

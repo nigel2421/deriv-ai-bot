@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/><meta content="mobile_tab" name="shell-type"/><title>Quant Dashboard - Deriv AI Bot</title><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config = { darkMode: "class", theme: { extend: { "colors": { "secondary-fixed": "#acedff", "surface-container-low": "#181b25", "on-primary-container": "#0d0096", "on-error-container": "#ffdad6", "surface-card": "#111827", "loss-rose": "#F43F5E", "border-strong": "#2D3B55", "text-muted": "#64748B", "surface-overlay": "#1E293B", "on-tertiary": "#003824", "surface-container-lowest": "#0a0e17", "on-tertiary-fixed-variant": "#005236", "agent-indigo": "#6366F1", "surface-base": "#090D16", "on-tertiary-container": "#000703", "primary-fixed": "#e1e0ff", "profit-emerald": "#10B981", "surface": "#0f131c", "error": "#ffb4ab", "text-primary": "#F8FAFC", "profit-emerald-muted": "rgba(16, 185, 129, 0.12)", "inverse-surface": "#dfe2ef", "on-primary-fixed": "#07006c", "secondary-container": "#03b5d3", "surface-container-highest": "#31353f", "on-primary-fixed-variant": "#2f2ebe", "inverse-on-surface": "#2c303a", "on-surface": "#dfe2ef", "outline-variant": "#464554", "on-tertiary-fixed": "#002113", "primary": "#c0c1ff", "primary-fixed-dim": "#c0c1ff", "outline": "#908fa0", "inverse-primary": "#494bd6", "tertiary-fixed-dim": "#4edea3", "on-secondary-container": "#00424e", "on-secondary-fixed": "#001f26", "surface-elevated": "#161F30", "on-primary": "#1000a9", "primary-container": "#8083ff", "on-secondary-fixed-variant": "#004e5c", "on-surface-variant": "#c7c4d7", "border-subtle": "#1F293D", "surface-container-high": "#262a34", "on-secondary": "#003640", "warning-amber-muted": "rgba(245, 158, 11, 0.12)", "loss-rose-muted": "rgba(244, 63, 94, 0.12)", "background": "#0f131c", "agent-cyan": "#06B6D4", "error-container": "#93000a", "secondary": "#4cd7f6", "warning-amber": "#F59E0B", "surface-tint": "#c0c1ff", "tertiary": "#4edea3", "on-error": "#690005", "on-background": "#dfe2ef", "secondary-fixed-dim": "#4cd7f6", "surface-container": "#1c1f29", "surface-dim": "#0f131c", "tertiary-container": "#00885d", "surface-variant": "#31353f", "text-secondary": "#94A3B8", "tertiary-fixed": "#6ffbbe", "surface-bright": "#353943" }, "borderRadius": { "DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem" }, "spacing": { "space-xl": "1.5rem", "space-xs": "0.25rem", "gutter": "0.75rem", "margin": "1rem", "space-md": "0.75rem", "space-sm": "0.375rem", "space-lg": "1rem" }, "fontFamily": { "label-lg": ["JetBrains Mono"], "headline-lg": ["Inter"], "label-md": ["JetBrains Mono"], "body-md": ["Inter"], "headline-sm": ["Inter"], "data-tabular-lg": ["JetBrains Mono"], "body-sm": ["Inter"], "label-sm": ["JetBrains Mono"], "headline-md": ["Inter"], "data-tabular-md": ["JetBrains Mono"] }, "fontSize": { "label-lg": ["13px", { "lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "600" }], "headline-lg": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "700" }], "label-md": ["11px", { "lineHeight": "14px", "letterSpacing": "0.04em", "fontWeight": "500" }], "body-md": ["13px", { "lineHeight": "18px", "fontWeight": "400" }], "headline-sm": ["14px", { "lineHeight": "20px", "letterSpacing": "-0.005em", "fontWeight": "600" }], "data-tabular-lg": ["16px", { "lineHeight": "20px", "letterSpacing": "-0.01em", "fontWeight": "700" }], "body-sm": ["12px", { "lineHeight": "16px", "fontWeight": "400" }], "label-sm": ["10px", { "lineHeight": "12px", "letterSpacing": "0.05em", "fontWeight": "500" }], "headline-md": ["18px", { "lineHeight": "24px", "letterSpacing": "-0.01em", "fontWeight": "600" }], "data-tabular-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.00em", "fontWeight": "500" }] } } } };</script><style>@layer base{html,body{width:100vw;margin:0;padding:0;}body{overscroll-behavior:none;}.pb-safe{padding-bottom:env(safe-area-inset-bottom,0px);}.pt-safe{padding-top:env(safe-area-inset-top,0px);}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style></head><body class="bg-surface-base text-text-primary flex flex-col min-h-screen selection:bg-agent-indigo selection:text-white"><header class="fixed top-0 w-full z-50 bg-surface-base/90 backdrop-blur-xl pt-safe shadow-[0_1px_8px_rgba(0,0,0,0.4)]"><div class="h-28 px-gutter flex flex-col justify-between py-space-xs"><div class="flex items-center justify-between"><div class="flex items-center gap-space-sm"><div class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-card"><span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-profit-emerald opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-profit-emerald"></span></span><span class="font-label-sm text-label-sm text-profit-emerald uppercase tracking-wider">Live Running</span></div><span class="font-headline-sm text-headline-sm tracking-tight text-text-primary uppercase">Deriv AI</span></div><div class="flex items-center gap-space-sm"><div class="flex items-center px-2 py-1 rounded bg-surface-card"><span class="font-label-sm text-label-sm text-text-muted mr-1">BAL</span><span class="font-data-tabular-md text-data-tabular-md text-profit-emerald">$9,855.91</span></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center shrink-0"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div><div class="flex items-center justify-between gap-space-sm"><div class="flex items-center bg-surface-card p-0.5 rounded"><button class="min-h-[26px] min-w-[32px] px-1.5 flex items-center justify-center rounded bg-surface-elevated text-profit-emerald" title="Resume Bot"><span class="material-symbols-outlined text-[16px]">play_arrow</span></button><button class="min-h-[26px] min-w-[32px] px-1.5 flex items-center justify-center rounded text-warning-amber" title="Pause Bot"><span class="material-symbols-outlined text-[16px]">pause</span></button><button class="min-h-[26px] min-w-[32px] px-1.5 flex items-center justify-center rounded text-agent-cyan" title="Restart Bot"><span class="material-symbols-outlined text-[16px]">restart_alt</span></button><button class="min-h-[26px] min-w-[32px] px-1.5 flex items-center justify-center rounded text-loss-rose" title="Emergency Halt"><span class="material-symbols-outlined text-[16px]">power_settings_new</span></button></div><div class="flex items-center gap-1 overflow-x-auto no-scrollbar"><a class="px-2 py-1 rounded font-label-sm text-label-sm text-text-muted whitespace-nowrap" data-path="overview-cards" href="#">Overview</a><a class="px-2 py-1 rounded font-label-sm text-label-sm text-text-muted whitespace-nowrap" data-path="active-agents" href="#">Agents</a><a class="px-2 py-1 rounded font-label-sm text-label-sm text-text-muted whitespace-nowrap" data-path="watchers-fleet" href="#">Watchers (20)</a><a class="px-2 py-1 rounded font-label-sm text-label-sm text-text-muted whitespace-nowrap" data-path="trade-log" href="#">Trade Log</a></div></div></div></header><main class="flex flex-col relative w-full px-gutter pt-28 pb-24 bg-surface-base flex-1 min-h-screen"><div class="flex flex-col w-full gap-y-3 pb-8">
+<!-- Top Vital KPI Matrix -->
+<section class="grid grid-cols-2 gap-2">
+<!-- Balance Card -->
+<div class="col-span-1 bg-surface-card p-3 rounded-xl shadow-md flex flex-col justify-between">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm text-text-muted uppercase tracking-wider">Balance</span>
+<span class="px-1.5 py-0.5 rounded bg-surface-elevated font-label-sm text-label-sm text-secondary">USD</span>
+</div>
+<div class="my-1.5">
+<span class="font-data-tabular-lg text-data-tabular-lg text-text-primary font-bold tracking-tight">$9,855.91</span>
+</div>
+<div class="flex items-center justify-between text-text-muted">
+<span class="font-label-sm text-label-sm">Stake Mode</span>
+<span class="font-label-sm text-label-sm text-profit-emerald font-semibold">Flat (2m)</span>
+</div>
+</div>
+<!-- Daily PnL Card -->
+<div class="col-span-1 bg-surface-card p-3 rounded-xl shadow-md flex flex-col justify-between">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm text-text-muted uppercase tracking-wider">Today PnL</span>
+<span class="flex items-center gap-1 font-label-sm text-label-sm text-loss-rose bg-loss-rose-muted px-1.5 py-0.5 rounded">
+<span class="material-symbols-outlined text-[12px]">trending_down</span>
+          -0.01%
+        </span>
+</div>
+<div class="my-1.5">
+<span class="font-data-tabular-lg text-data-tabular-lg text-loss-rose font-bold">-$1.32</span>
+</div>
+<div class="flex items-center justify-between text-text-muted">
+<span class="font-label-sm text-label-sm">Trades: <strong class="text-text-primary">7</strong></span>
+<span class="font-label-sm text-label-sm">Open: <strong class="text-text-primary">0</strong></span>
+</div>
+</div>
+<!-- Bot Operational Telemetry Strip -->
+<div class="col-span-2 bg-surface-card px-3 py-2 rounded-xl shadow-sm flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="relative flex h-2 w-2">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-profit-emerald opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-profit-emerald"></span>
+</span>
+<span class="font-label-sm text-label-sm text-text-muted">RISK PAUSED:</span>
+<span class="font-label-sm text-label-sm text-profit-emerald font-bold">FALSE (0 Resumes)</span>
+</div>
+<div class="flex items-center gap-3">
+<div class="flex items-center gap-1">
+<span class="font-label-sm text-label-sm text-text-muted">POLL</span>
+<span class="font-label-sm text-label-sm text-agent-cyan">15s</span>
+</div>
+<div class="flex items-center gap-1">
+<span class="font-label-sm text-label-sm text-text-muted">API</span>
+<span class="font-label-sm text-label-sm text-primary font-mono uppercase">Auto</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Portfolio Manager & Exposure Guardian -->
+<section class="bg-surface-card rounded-xl p-3 shadow-md flex flex-col gap-2.5">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="p-1 rounded bg-surface-elevated text-warning-amber flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px]">verified_user</span>
+</div>
+<div>
+<h2 class="font-headline-sm text-headline-sm text-text-primary tracking-tight">Portfolio Manager Agent</h2>
+<p class="font-label-sm text-label-sm text-text-muted">Capital Allocation &amp; Exposure Control</p>
+</div>
+</div>
+<div class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-loss-rose-muted text-loss-rose">
+<span class="material-symbols-outlined text-[13px] animate-pulse">lock</span>
+<span class="font-label-sm text-label-sm uppercase font-bold tracking-wider">HARD VETO ACTIVE</span>
+</div>
+</div>
+<!-- Gauge Matrix -->
+<div class="grid grid-cols-2 gap-2 pt-1">
+<!-- Risk Per Trade -->
+<div class="bg-surface-elevated p-2.5 rounded-lg flex flex-col gap-1.5">
+<div class="flex justify-between items-center">
+<span class="font-label-sm text-label-sm text-text-muted">Risk Per Trade</span>
+<span class="font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold">1.0%</span>
+</div>
+<div class="w-full bg-surface-overlay h-1.5 rounded-full overflow-hidden">
+<div class="bg-profit-emerald h-full rounded-full" style="width: 10%"></div>
+</div>
+<div class="flex justify-between text-text-muted font-label-sm text-label-sm">
+<span>Max $10.00</span>
+<span>$1,000 basis</span>
+</div>
+</div>
+<!-- Max Drawdown -->
+<div class="bg-surface-elevated p-2.5 rounded-lg flex flex-col gap-1.5">
+<div class="flex justify-between items-center">
+<span class="font-label-sm text-label-sm text-text-muted">Max Drawdown</span>
+<span class="font-data-tabular-md text-data-tabular-md text-warning-amber font-bold">5.0%</span>
+</div>
+<div class="w-full bg-surface-overlay h-1.5 rounded-full overflow-hidden">
+<div class="bg-warning-amber h-full rounded-full" style="width: 26%"></div>
+</div>
+<div class="flex justify-between text-text-muted font-label-sm text-label-sm">
+<span>Current -$1.32</span>
+<span>$50.00 Cap</span>
+</div>
+</div>
+<!-- Open Contracts Sentinel -->
+<div class="bg-surface-elevated p-2.5 rounded-lg flex flex-col justify-between">
+<span class="font-label-sm text-label-sm text-text-muted">Concurrent Contracts</span>
+<div class="flex items-baseline justify-between mt-1">
+<div class="flex items-center gap-1.5">
+<span class="h-2 w-2 rounded-full bg-profit-emerald"></span>
+<span class="font-data-tabular-lg text-data-tabular-lg text-text-primary">0</span>
+<span class="font-label-sm text-label-sm text-text-muted">/ 3 active</span>
+</div>
+<span class="font-label-sm text-label-sm text-profit-emerald">Available</span>
+</div>
+</div>
+<!-- Stake Boundary Range -->
+<div class="bg-surface-elevated p-2.5 rounded-lg flex flex-col justify-between">
+<span class="font-label-sm text-label-sm text-text-muted">Stake Dynamic Boundaries</span>
+<div class="flex items-center justify-between mt-1">
+<span class="font-data-tabular-md text-data-tabular-md text-text-secondary">$1.00 <span class="text-[9px] text-text-muted font-normal">FLOOR</span></span>
+<span class="material-symbols-outlined text-[14px] text-text-muted">arrow_forward</span>
+<span class="font-data-tabular-md text-data-tabular-md text-agent-cyan font-bold">$10.00 <span class="text-[9px] text-text-muted font-normal">CEILING</span></span>
+</div>
+</div>
+</div>
+</section>
+<!-- Infrastructure Health & Telemetry -->
+<section class="bg-surface-card rounded-xl p-3 shadow-md flex flex-col gap-2">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="p-1 rounded bg-surface-elevated text-secondary flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px]">dns</span>
+</div>
+<div>
+<h2 class="font-headline-sm text-headline-sm text-text-primary tracking-tight">Infrastructure Health</h2>
+<p class="font-label-sm text-label-sm text-text-muted font-mono">24/7 Home Server · Ubuntu LTS</p>
+</div>
+</div>
+<div class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-profit-emerald-muted text-profit-emerald">
+<span class="h-1.5 w-1.5 rounded-full bg-profit-emerald animate-pulse"></span>
+<span class="font-label-sm text-label-sm uppercase font-semibold">Self-Healing Active</span>
+</div>
+</div>
+<!-- Resource Gauges -->
+<div class="grid grid-cols-3 gap-2 mt-1">
+<div class="bg-surface-elevated p-2 rounded-lg flex flex-col gap-1">
+<div class="flex justify-between items-center">
+<span class="font-label-sm text-label-sm text-text-muted">CPU</span>
+<span class="font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold">15.0%</span>
+</div>
+<div class="w-full bg-surface-overlay h-1 rounded-full overflow-hidden">
+<div class="bg-profit-emerald h-full rounded-full" style="width: 15%"></div>
+</div>
+</div>
+<div class="bg-surface-elevated p-2 rounded-lg flex flex-col gap-1">
+<div class="flex justify-between items-center">
+<span class="font-label-sm text-label-sm text-text-muted">RAM</span>
+<span class="font-data-tabular-md text-data-tabular-md text-agent-cyan font-bold">35.0%</span>
+</div>
+<div class="w-full bg-surface-overlay h-1 rounded-full overflow-hidden">
+<div class="bg-agent-cyan h-full rounded-full" style="width: 35%"></div>
+</div>
+</div>
+<div class="bg-surface-elevated p-2 rounded-lg flex flex-col gap-1">
+<div class="flex justify-between items-center">
+<span class="font-label-sm text-label-sm text-text-muted">Disk</span>
+<span class="font-data-tabular-md text-data-tabular-md text-agent-indigo font-bold">16.0%</span>
+</div>
+<div class="w-full bg-surface-overlay h-1 rounded-full overflow-hidden">
+<div class="bg-agent-indigo h-full rounded-full" style="width: 16%"></div>
+</div>
+</div>
+</div>
+</section>
+<!-- Genetic Breeding & RL Q-Table Card -->
+<section class="bg-surface-card rounded-xl p-3 shadow-md flex flex-col gap-2.5">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="p-1 rounded bg-surface-elevated text-primary flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px]">biotech</span>
+</div>
+<div>
+<h2 class="font-headline-sm text-headline-sm text-text-primary tracking-tight">Genetic Breeding &amp; RL Engine</h2>
+<p class="font-label-sm text-label-sm text-text-muted font-mono">Stage 1-4 Adaptive Evolution</p>
+</div>
+</div>
+<span class="px-2 py-0.5 rounded bg-agent-indigo/15 text-agent-indigo font-label-sm text-label-sm font-semibold uppercase">Q-Learning Active</span>
+</div>
+<div class="grid grid-cols-2 gap-2 text-text-secondary">
+<div class="bg-surface-elevated p-2.5 rounded-lg flex flex-col justify-between">
+<div class="flex items-center justify-between mb-1">
+<span class="font-label-sm text-label-sm text-text-muted">Genetic Algorithm</span>
+<span class="font-label-sm text-label-sm text-profit-emerald font-mono">15% Mut</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-primary leading-tight">Auto-breeding fittest DNA offspring via Crossover operator</p>
+<span class="font-label-sm text-label-sm text-text-muted mt-2 font-mono truncate">Fit: (WR * PnL) - DD</span>
+</div>
+<div class="bg-surface-elevated p-2.5 rounded-lg flex flex-col justify-between">
+<div class="flex items-center justify-between mb-1">
+<span class="font-label-sm text-label-sm text-text-muted">Q-Table Optimization</span>
+<span class="font-label-sm text-label-sm text-agent-cyan font-mono">Online</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-primary leading-tight">State → Action → Reward live feedback inference matrix</p>
+<span class="font-label-sm text-label-sm text-text-muted mt-2 font-mono">Q(s, a) execution filter</span>
+</div>
+</div>
+</section>
+<!-- Strategy Meta-Agent Leaderboard -->
+<section class="bg-surface-card rounded-xl p-3 shadow-md flex flex-col gap-2">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="p-1 rounded bg-surface-elevated text-warning-amber flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px]">military_tech</span>
+</div>
+<h2 class="font-headline-sm text-headline-sm text-text-primary tracking-tight">Chief Strategy Leaderboard</h2>
+</div>
+<span class="font-label-sm text-label-sm text-text-muted font-mono">N=100 Audit</span>
+</div>
+<!-- Leaderboard Table/Rows -->
+<div class="flex flex-col gap-1.5">
+<!-- TestAgent -->
+<div class="bg-surface-elevated p-2.5 rounded-lg flex flex-col gap-1.5">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="font-label-md text-label-md text-text-primary font-mono font-bold">TestAgent</span>
+<span class="px-1.5 py-0.2 rounded bg-profit-emerald-muted text-profit-emerald font-label-sm text-label-sm font-semibold">PROMOTED</span>
+</div>
+<span class="font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold">+$10.00</span>
+</div>
+<div class="grid grid-cols-3 gap-1 pt-1 text-center font-mono">
+<div class="bg-surface-card py-1 px-1.5 rounded">
+<span class="block font-label-sm text-label-sm text-text-muted">ACCURACY</span>
+<span class="font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold">100.0%</span>
+</div>
+<div class="bg-surface-card py-1 px-1.5 rounded">
+<span class="block font-label-sm text-label-sm text-text-muted">WEIGHT</span>
+<span class="font-data-tabular-md text-data-tabular-md text-primary font-bold">1.80x</span>
+</div>
+<div class="bg-surface-card py-1 px-1.5 rounded">
+<span class="block font-label-sm text-label-sm text-text-muted">RECORD</span>
+<span class="font-data-tabular-md text-data-tabular-md text-text-primary">10W / 0L</span>
+</div>
+</div>
+</div>
+<!-- TrendAgent -->
+<div class="bg-surface-elevated p-2.5 rounded-lg flex flex-col gap-1.5">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="font-label-md text-label-md text-text-primary font-mono font-bold">TrendAgent</span>
+<span class="px-1.5 py-0.2 rounded bg-surface-card text-text-muted font-label-sm text-label-sm">ACTIVE</span>
+</div>
+<span class="font-data-tabular-md text-data-tabular-md text-loss-rose font-bold">-$5.00</span>
+</div>
+<div class="grid grid-cols-3 gap-1 pt-1 text-center font-mono">
+<div class="bg-surface-card py-1 px-1.5 rounded">
+<span class="block font-label-sm text-label-sm text-text-muted">ACCURACY</span>
+<span class="font-data-tabular-md text-data-tabular-md text-loss-rose font-bold">0.0%</span>
+</div>
+<div class="bg-surface-card py-1 px-1.5 rounded">
+<span class="block font-label-sm text-label-sm text-text-muted">WEIGHT</span>
+<span class="font-data-tabular-md text-data-tabular-md text-text-muted font-bold">0.50x</span>
+</div>
+<div class="bg-surface-card py-1 px-1.5 rounded">
+<span class="block font-label-sm text-label-sm text-text-muted">RECORD</span>
+<span class="font-data-tabular-md text-data-tabular-md text-text-primary">0W / 5L</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Active Intelligence Specialist Agents -->
+<section class="bg-surface-card rounded-xl p-3 shadow-md flex flex-col gap-2.5">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="p-1 rounded bg-surface-elevated text-agent-cyan flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px]">psychology</span>
+</div>
+<div>
+<h2 class="font-headline-sm text-headline-sm text-text-primary tracking-tight">Active Intelligence Agents</h2>
+<p class="font-label-sm text-label-sm text-text-muted">Redis Consensus Ensemble (9 Specialized Nodes)</p>
+</div>
+</div>
+<span class="font-label-sm text-label-sm text-profit-emerald font-mono flex items-center gap-1">
+<span class="h-1.5 w-1.5 rounded-full bg-profit-emerald"></span>
+        9/9 UP
+      </span>
+</div>
+<!-- Agent Grid -->
+<div class="grid grid-cols-2 gap-2">
+<!-- CEO -->
+<div class="bg-surface-elevated p-2 rounded-lg flex flex-col justify-between">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm font-bold text-warning-amber">👑 The CEO</span>
+<span class="px-1 py-0.2 rounded bg-surface-card font-label-sm text-label-sm text-agent-indigo font-mono">Exec</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-secondary mt-1 text-[11px] leading-tight">Agent Manager &amp; System Orchestrator</p>
+<div class="flex items-center justify-between mt-2 pt-1">
+<span class="font-label-sm text-label-sm text-text-muted">Weight: Primary</span>
+<span class="h-1.5 w-1.5 rounded-full bg-profit-emerald"></span>
+</div>
+</div>
+<!-- Risk Guardian -->
+<div class="bg-surface-elevated p-2 rounded-lg flex flex-col justify-between">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm font-bold text-loss-rose">🛡️ Risk Guardian</span>
+<span class="px-1 py-0.2 rounded bg-loss-rose-muted font-label-sm text-label-sm text-loss-rose font-mono">1.50x</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-secondary mt-1 text-[11px] leading-tight">Hard Drawdown Veto &amp; Streak Safety</p>
+<div class="flex items-center justify-between mt-2 pt-1">
+<span class="font-label-sm text-label-sm text-loss-rose font-semibold">VETO POWER</span>
+<span class="h-1.5 w-1.5 rounded-full bg-profit-emerald"></span>
+</div>
+</div>
+<!-- Trend Analysis -->
+<div class="bg-surface-elevated p-2 rounded-lg flex flex-col justify-between">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm font-bold text-profit-emerald">📈 Trend Agent</span>
+<span class="px-1 py-0.2 rounded bg-surface-card font-label-sm text-label-sm text-profit-emerald font-mono">1.20x</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-secondary mt-1 text-[11px] leading-tight">EMA (9/21), SMA 50 &amp; MACD Cross</p>
+<div class="flex items-center justify-between mt-2 pt-1">
+<span class="font-label-sm text-label-sm text-text-muted">Momentum</span>
+<span class="h-1.5 w-1.5 rounded-full bg-profit-emerald"></span>
+</div>
+</div>
+<!-- Pattern Recognition -->
+<div class="bg-surface-elevated p-2 rounded-lg flex flex-col justify-between">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm font-bold text-agent-cyan">🔍 Pattern Agent</span>
+<span class="px-1 py-0.2 rounded bg-surface-card font-label-sm text-label-sm text-agent-cyan font-mono">1.10x</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-secondary mt-1 text-[11px] leading-tight">Digit Sequences &amp; HPP Decay</p>
+<div class="flex items-center justify-between mt-2 pt-1">
+<span class="font-label-sm text-label-sm text-text-muted">Formations</span>
+<span class="h-1.5 w-1.5 rounded-full bg-profit-emerald"></span>
+</div>
+</div>
+<!-- Volatility Agent -->
+<div class="bg-surface-elevated p-2 rounded-lg flex flex-col justify-between">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm font-bold text-text-primary">⚡ Volatility</span>
+<span class="px-1 py-0.2 rounded bg-surface-card font-label-sm text-label-sm text-text-muted font-mono">1.00x</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-secondary mt-1 text-[11px] leading-tight">Tick Velocity, Spikes &amp; ATR Scores</p>
+<div class="flex items-center justify-between mt-2 pt-1">
+<span class="font-label-sm text-label-sm text-text-muted">Dynamics</span>
+<span class="h-1.5 w-1.5 rounded-full bg-profit-emerald"></span>
+</div>
+</div>
+<!-- Scalping Agent -->
+<div class="bg-surface-elevated p-2 rounded-lg flex flex-col justify-between">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm font-bold text-primary">🎯 Scalping</span>
+<span class="px-1 py-0.2 rounded bg-surface-card font-label-sm text-label-sm text-text-muted font-mono">1.00x</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-secondary mt-1 text-[11px] leading-tight">Micro-tick Impulse &amp; Parity Runs</p>
+<div class="flex items-center justify-between mt-2 pt-1">
+<span class="font-label-sm text-label-sm text-text-muted">High-Freq</span>
+<span class="h-1.5 w-1.5 rounded-full bg-profit-emerald"></span>
+</div>
+</div>
+<!-- Learning Agent (The Brain) -->
+<div class="bg-surface-elevated p-2 rounded-lg flex flex-col justify-between">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm font-bold text-agent-indigo">🧠 The Brain</span>
+<span class="px-1 py-0.2 rounded bg-surface-card font-label-sm text-label-sm text-agent-indigo font-mono">Adapt</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-secondary mt-1 text-[11px] leading-tight">Bayesian Recalibration Engine</p>
+<div class="flex items-center justify-between mt-2 pt-1">
+<span class="font-label-sm text-label-sm text-text-muted">Historical WR</span>
+<span class="h-1.5 w-1.5 rounded-full bg-profit-emerald"></span>
+</div>
+</div>
+<!-- Consensus Voting -->
+<div class="bg-surface-elevated p-2 rounded-lg flex flex-col justify-between">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-label-sm font-bold text-secondary">⚖️ Consensus</span>
+<span class="px-1 py-0.2 rounded bg-surface-card font-label-sm text-label-sm text-secondary font-mono">Gate</span>
+</div>
+<p class="font-body-sm text-body-sm text-text-secondary mt-1 text-[11px] leading-tight">Ensemble Voting &amp; 80% Threshold</p>
+<div class="flex items-center justify-between mt-2 pt-1">
+<span class="font-label-sm text-label-sm text-text-muted">Decision Arbiter</span>
+<span class="h-1.5 w-1.5 rounded-full bg-profit-emerald"></span>
+</div>
+</div>
+</div>
+</section>
+<!-- Recent Executions & Telemetry Trade Log -->
+<section class="bg-surface-card rounded-xl p-3 shadow-md flex flex-col gap-2">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="p-1 rounded bg-surface-elevated text-primary flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px]">receipt_long</span>
+</div>
+<div>
+<h2 class="font-headline-sm text-headline-sm text-text-primary tracking-tight">Recent Trade Executions</h2>
+<p class="font-label-sm text-label-sm text-text-muted">Deriv Contracts Audited Live</p>
+</div>
+</div>
+<span class="font-data-tabular-md text-data-tabular-md text-text-muted">7 Today</span>
+</div>
+<!-- Quick Filter Tabs -->
+<div class="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5" id="trade-filters">
+<button class="px-2 py-0.5 rounded font-label-sm text-label-sm bg-agent-cyan text-surface-container-lowest font-bold whitespace-nowrap">All</button>
+<button class="px-2 py-0.5 rounded font-label-sm text-label-sm bg-surface-elevated text-text-muted whitespace-nowrap">Wins</button>
+<button class="px-2 py-0.5 rounded font-label-sm text-label-sm bg-surface-elevated text-text-muted whitespace-nowrap">Losses</button>
+<button class="px-2 py-0.5 rounded font-label-sm text-label-sm bg-surface-elevated text-text-muted whitespace-nowrap">Failed Offers</button>
+</div>
+<!-- Trade List Items -->
+<div class="flex flex-col gap-1.5 mt-1 font-mono">
+<!-- Item 1: FAILED_OFFER BOOM500 -->
+<div class="bg-surface-elevated p-2 rounded-lg flex items-center justify-between">
+<div class="flex flex-col">
+<div class="flex items-center gap-1.5">
+<span class="px-1.5 py-0.2 rounded bg-surface-card text-text-muted font-label-sm text-label-sm font-bold">FAILED_OFFER</span>
+<span class="font-label-md text-label-md text-text-primary font-bold">BOOM500</span>
+<span class="font-label-sm text-label-sm text-secondary">DIGITODD</span>
+</div>
+<span class="font-label-sm text-label-sm text-text-muted mt-0.5">21:17:25 · 88% conf · digits 5t</span>
+</div>
+<div class="text-right flex flex-col items-end">
+<span class="font-data-tabular-md text-data-tabular-md text-text-muted">Stake $1.00</span>
+<span class="font-label-sm text-label-sm text-loss-rose">No Offer</span>
+</div>
+</div>
+<!-- Item 2: LOSS JD50 -->
+<div class="bg-surface-elevated p-2 rounded-lg flex items-center justify-between">
+<div class="flex flex-col">
+<div class="flex items-center gap-1.5">
+<span class="px-1.5 py-0.2 rounded bg-loss-rose-muted text-loss-rose font-label-sm text-label-sm font-bold">LOSS</span>
+<span class="font-label-md text-label-md text-text-primary font-bold">JD50</span>
+<span class="font-label-sm text-label-sm text-agent-cyan">CALL</span>
+</div>
+<span class="font-label-sm text-label-sm text-text-muted mt-0.5">21:16:44 · #13640003299</span>
+</div>
+<div class="text-right flex flex-col items-end">
+<span class="font-data-tabular-md text-data-tabular-md text-loss-rose font-bold">-$1.00</span>
+<span class="font-label-sm text-label-sm text-text-muted">Stake $1.00</span>
+</div>
+</div>
+<!-- Item 3: WIN R_50 -->
+<div class="bg-surface-elevated p-2 rounded-lg flex items-center justify-between">
+<div class="flex flex-col">
+<div class="flex items-center gap-1.5">
+<span class="px-1.5 py-0.2 rounded bg-profit-emerald-muted text-profit-emerald font-label-sm text-label-sm font-bold">WIN</span>
+<span class="font-label-md text-label-md text-text-primary font-bold">R_50</span>
+<span class="font-label-sm text-label-sm text-warning-amber">PUT</span>
+</div>
+<span class="font-label-sm text-label-sm text-text-muted mt-0.5">21:13:42 · #13639691259</span>
+</div>
+<div class="text-right flex flex-col items-end">
+<span class="font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold">+$0.88</span>
+<span class="font-label-sm text-label-sm text-text-muted">Stake $1.00</span>
+</div>
+</div>
+<!-- Item 4: WIN R_50 -->
+<div class="bg-surface-elevated p-2 rounded-lg flex items-center justify-between">
+<div class="flex flex-col">
+<div class="flex items-center gap-1.5">
+<span class="px-1.5 py-0.2 rounded bg-profit-emerald-muted text-profit-emerald font-label-sm text-label-sm font-bold">WIN</span>
+<span class="font-label-md text-label-md text-text-primary font-bold">R_50</span>
+<span class="font-label-sm text-label-sm text-warning-amber">PUT</span>
+</div>
+<span class="font-label-sm text-label-sm text-text-muted mt-0.5">21:12:56 · #13639615139</span>
+</div>
+<div class="text-right flex flex-col items-end">
+<span class="font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold">+$0.88</span>
+<span class="font-label-sm text-label-sm text-text-muted">Stake $1.00</span>
+</div>
+</div>
+<!-- Item 5: SKIPPED JD10 -->
+<div class="bg-surface-elevated p-2 rounded-lg flex items-center justify-between">
+<div class="flex flex-col">
+<div class="flex items-center gap-1.5">
+<span class="px-1.5 py-0.2 rounded bg-warning-amber-muted text-warning-amber font-label-sm text-label-sm font-bold">SKIPPED</span>
+<span class="font-label-md text-label-md text-text-primary font-bold">JD10</span>
+<span class="font-label-sm text-label-sm text-text-muted">UNDER 7</span>
+</div>
+<span class="font-label-sm text-label-sm text-text-muted mt-0.5">21:09:38 · Low Payout Filter</span>
+</div>
+<div class="text-right flex flex-col items-end">
+<span class="font-data-tabular-md text-data-tabular-md text-text-muted font-bold">—</span>
+<span class="font-label-sm text-label-sm text-warning-amber">EV Vetoed</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Market Opportunity Ranking (MOR) -->
+<section class="bg-surface-card rounded-xl p-3 shadow-md flex flex-col gap-2">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="p-1 rounded bg-surface-elevated text-profit-emerald flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px]">equalizer</span>
+</div>
+<div>
+<h2 class="font-headline-sm text-headline-sm text-text-primary tracking-tight">Market Opportunity Ranking (MOR)</h2>
+<p class="font-label-sm text-label-sm text-text-muted">Velocity &amp; Direction Persistence Engine</p>
+</div>
+</div>
+<span class="font-label-sm text-label-sm text-agent-cyan font-mono">Score 62.9</span>
+</div>
+<!-- Active High Scored Tickers Carousel -->
+<div class="grid grid-cols-4 gap-1.5 font-mono text-center pt-1">
+<div class="bg-surface-elevated py-2 px-1 rounded-lg">
+<span class="block font-label-sm text-label-sm text-text-primary font-bold">R_10</span>
+<span class="block font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold mt-0.5">62.9</span>
+<span class="font-label-sm text-label-sm text-text-muted">10 Trd</span>
+</div>
+<div class="bg-surface-elevated py-2 px-1 rounded-lg">
+<span class="block font-label-sm text-label-sm text-text-primary font-bold">JD50</span>
+<span class="block font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold mt-0.5">62.9</span>
+<span class="font-label-sm text-label-sm text-text-muted">18 Trd</span>
+</div>
+<div class="bg-surface-elevated py-2 px-1 rounded-lg">
+<span class="block font-label-sm text-label-sm text-text-primary font-bold">R_25</span>
+<span class="block font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold mt-0.5">62.9</span>
+<span class="font-label-sm text-label-sm text-text-muted">3 Trd</span>
+</div>
+<div class="bg-surface-elevated py-2 px-1 rounded-lg">
+<span class="block font-label-sm text-label-sm text-text-primary font-bold">BOOM500</span>
+<span class="block font-data-tabular-md text-data-tabular-md text-profit-emerald font-bold mt-0.5">62.9</span>
+<span class="font-label-sm text-label-sm text-text-muted">Ready</span>
+</div>
+</div>
+</section>
+<!-- Live Watcher Fleet (20 Markets) Mini Drawer Bar -->
+<section class="bg-surface-card rounded-xl p-3 shadow-md flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="relative flex h-2 w-2">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-profit-emerald opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-profit-emerald"></span>
+</div>
+<span class="font-label-md text-label-md text-text-primary font-semibold">20 Market Watchers Scanning</span>
+</div>
+<div class="flex items-center gap-1 font-label-sm text-label-sm text-text-muted font-mono">
+<span>R_10..JD50</span>
+<span class="material-symbols-outlined text-[16px] text-text-secondary">chevron_right</span>
+</div>
+</section>
+</div>
+<script>
+  // Simple interactive filter button toggle for trade executions
+  document.querySelectorAll('#trade-filters button').forEach(button => {
+    button.addEventListener('click', () => {
+      document.querySelectorAll('#trade-filters button').forEach(b => {
+        b.className = 'px-2 py-0.5 rounded font-label-sm text-label-sm bg-surface-elevated text-text-muted whitespace-nowrap transition-colors';
+      });
+      button.className = 'px-2 py-0.5 rounded font-label-sm text-label-sm bg-agent-cyan text-surface-container-lowest font-bold whitespace-nowrap transition-colors';
+    });
+  });
+</script></main><nav class="fixed bottom-0 w-full z-50 pb-safe bg-surface-card/90 backdrop-blur-xl shadow-[0_-1px_8px_rgba(0,0,0,0.5)]" data-active-classes="text-agent-cyan"><div class="flex justify-around items-center h-16 px-gutter"><a aria-current="page" class="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] transition-colors text-agent-cyan" data-path="quant-dashboard" href="#"><span class="material-symbols-outlined text-[20px]">grid_view</span><span class="font-label-sm text-label-sm">Dashboard</span></a><a class="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-text-muted transition-colors" data-path="agent-fleet" href="#"><span class="material-symbols-outlined text-[20px]">smart_toy</span><span class="font-label-sm text-label-sm">Agents</span></a><a class="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-text-muted transition-colors" data-path="live-markets" href="#"><span class="material-symbols-outlined text-[20px]">candlestick_chart</span><span class="font-label-sm text-label-sm">Markets</span></a><a class="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-text-muted transition-colors" data-path="trade-history" href="#"><span class="material-symbols-outlined text-[20px]">history</span><span class="font-label-sm text-label-sm">History</span></a><a class="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] text-text-muted transition-colors" data-path="bot-settings" href="#"><span class="material-symbols-outlined text-[20px]">settings</span><span class="font-label-sm text-label-sm">Settings</span></a></div></nav></body></html>
