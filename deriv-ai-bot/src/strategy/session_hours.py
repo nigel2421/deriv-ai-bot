@@ -109,6 +109,5 @@ def preferred_minute_duration(symbol: str, default_minutes: int = 2) -> int:
         except ValueError:
             return 30
     if is_spike_synthetic(symbol):
-        # Prefer not using minutes at all (caller should skip)
-        return max(1, int(default_minutes))
+        return 1
     return max(1, int(default_minutes))

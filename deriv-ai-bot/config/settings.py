@@ -138,3 +138,7 @@ DEEPSEEK_MAX_GLOBAL_TRADES = _env_int("DEEPSEEK_MAX_GLOBAL_TRADES", 10000)
 # Multi-Agent Trading System Framework Toggle (defaults to True)
 ENABLE_MULTI_AGENT = _env_bool("ENABLE_MULTI_AGENT", True)
 
+# Quorum required for Multi-Agent Consensus (defaults to 1 agent)
+MIN_QUORUM = _env_int("MIN_QUORUM", 1)
+
+

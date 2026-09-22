@@ -97,15 +97,31 @@ class ChiefStrategyAgent(BaseAgent):
         return audit_signals
 
     def get_agent_rankings(self) -> List[Dict[str, Any]]:
-
         """Retrieve full agent leaderboard ranked by accuracy and profit."""
+        core_agents = [
+            "TrendAgent",
+            "VolatilityAgent",
+            "PatternAgent",
+            "ScalpingAgent",
+            "LearningAgent",
+            "ConsensusAgent",
+            "RiskAgent",
+            "PortfolioManagerAgent",
+            "MarketRegimeAgent",
+            "RLAgent",
+            "ExecutionAgent",
+        ]
+        history_keys = list(self.reputation_engine.history.keys())
+        all_names = list(dict.fromkeys(core_agents + history_keys))
+
         rankings = []
-        for name, q in self.reputation_engine.history.items():
+        for name in all_names:
+            q = self.reputation_engine.history.get(name, [])
             wins = sum(1 for x in q if x)
             total = len(q)
             acc = (wins / total * 100) if total > 0 else 50.0
             pnl = self.reputation_engine.pnl_history.get(name, 0.0)
-            status = "QUARANTINED" if name in self.quarantined_agents else ("PROMOTED" if acc >= 70 else "ACTIVE")
+            status = "QUARANTINED" if name in self.quarantined_agents else ("PROMOTED" if acc >= 70 and total >= 5 else "ACTIVE")
 
             rankings.append(
                 {

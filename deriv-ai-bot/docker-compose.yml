@@ -53,33 +53,11 @@ services:
       postgres:
         condition: service_healthy
 
-  trading-engine:
-    build: .
-    container_name: bot-trading-engine
-    restart: unless-stopped
-    command: python -m src.main
-    env_file:
-      - .env
-    environment:
-      - PYTHONPATH=/app
-      - MODE=${MODE:-demo}
-      - ENABLE_POSTGRES=true
-      - ENABLE_REDIS=true
-      - REDIS_URL=redis://redis:6379/0
-    volumes:
-      - ./data:/app/data
-      - ./src:/app/src
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
   api-dashboard:
     build: .
     container_name: bot-api-dashboard
     restart: unless-stopped
-    command: uvicorn src.cloud_app:app --host 0.0.0.0 --port 8080 --workers 2
+    command: uvicorn src.cloud_app:app --host 0.0.0.0 --port 8080 --workers 1
     env_file:
       - .env
     environment:

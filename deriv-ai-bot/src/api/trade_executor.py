@@ -31,12 +31,27 @@ class TradeExecutor:
         duration: int = 5,
         duration_unit: str = "t",
     ) -> Dict[str, Any]:
+        from src.strategy.session_hours import is_spike_synthetic, is_boom_symbol, is_crash_symbol
+
+        # Enforce Deriv restrictions for Boom & Crash / spike synthetics:
+        # 1) Deriv forbids tick durations (t) on Boom/Crash; auto-convert to minute duration (m)
+        if is_spike_synthetic(symbol) or is_boom_symbol(symbol) or is_crash_symbol(symbol):
+            if duration_unit == "t":
+                duration_unit = "m"
+                duration = 1 if duration > 5 else max(1, duration)
+
         ok, reason, nb = validate_contract(contract_type, barrier)
         if not ok:
             raise ValueError(f"Invalid contract: {reason}")
 
         ct = normalize_contract_type(contract_type)
         assert ct is not None
+
+        # 2) Enforce strict directional rules (BOOM -> CALL only, CRASH -> PUT only)
+        if is_boom_symbol(symbol) and ct != "CALL":
+            raise ValueError(f"Boom index {symbol} only offers CALL contracts, got {ct}")
+        if is_crash_symbol(symbol) and ct != "PUT":
+            raise ValueError(f"Crash index {symbol} only offers PUT contracts, got {ct}")
 
         proposal: Dict[str, Any] = {
             "proposal": 1,
@@ -213,8 +228,19 @@ class TradeExecutor:
             REASON_UNAVAILABLE,
         )
 
+        from src.strategy.session_hours import (
+            is_spike_synthetic,
+            is_boom_symbol,
+            is_crash_symbol,
+        )
+
+        if is_spike_synthetic(symbol) or is_boom_symbol(symbol) or is_crash_symbol(symbol):
+            if duration_unit == "t":
+                duration_unit = "m"
+                duration = 1 if duration > 5 else max(1, duration)
+
         self.last_error = None
-        attempts: list = [(int(duration), str(duration_unit or "t"))]
+        attempts: list = [(int(duration), str(duration_unit or "m" if (is_spike_synthetic(symbol) or is_boom_symbol(symbol) or is_crash_symbol(symbol)) else "t"))]
         if try_duration_fallbacks:
             for alt in duration_fallbacks(duration, duration_unit or "t", symbol=symbol):
                 if alt not in attempts:

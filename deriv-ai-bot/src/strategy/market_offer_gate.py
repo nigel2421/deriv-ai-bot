@@ -95,11 +95,11 @@ def duration_fallbacks(duration: int, unit: str, *, symbol: str = "") -> List[Tu
         return out
 
     if is_spike_synthetic(symbol) or u == "m":
-        # Boom/Crash etc: minutes often rejected → ticks first
-        for nd in (5, 3, 1, 10, 15):
-            add(nd, "t")
+        # Boom/Crash etc: Deriv requires minute durations (1m, 2m, 3m, 5m) for Rise/Fall
         for nd in (1, 2, 3, 5):
             add(nd, "m")
+        for nd in (5, 3, 10, 15):
+            add(nd, "t")
         return out
 
     if u == "t":

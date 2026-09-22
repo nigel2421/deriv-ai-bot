@@ -13,6 +13,7 @@ from config.settings import (
     MAX_STAKE_PCT,
     MIN_BALANCE,
     MIN_NET_RETURN,
+    MIN_QUORUM,
     MIN_STAKE,
     SYMBOLS,
     TRADE_DURATION_TICKS,
@@ -66,6 +67,10 @@ from src.agents.execution_agent import ExecutionAgent
 from src.agents.base_agent import AgentSignal
 from src.strategy.decision_auditor import DecisionAuditor, DecisionTrace, ShadowTrader, GateAnalytics
 from src.strategy.experiment_engine import ExperimentEngine
+from src.services.market_discovery_manager import MarketDiscoveryManager
+from src.strategy.champion_challenger_engine import ChampionChallengerEngine
+from src.strategy.opportunity_engine import OpportunityEngine, QualifiedOpportunity
+from src.agents.step_specialist_agent import StepSpecialistAgent
 from datetime import datetime, timezone
 
 
@@ -219,10 +224,19 @@ class TradingOrchestrator:
         self.trend_agent = TrendAgent()
         self.volatility_agent = VolatilityAgent()
         self.pattern_agent = PatternAgent()
+        self.step_agent = StepSpecialistAgent()
         self.learning_agent = LearningAgent()
-        self.consensus_agent = ConsensusAgent(min_consensus_score=self.min_confidence)
+        self.consensus_agent = ConsensusAgent(
+            min_consensus_score=self.min_confidence,
+            min_quorum=MIN_QUORUM,
+        )
         self.risk_agent = RiskAgent()
         self.execution_agent = ExecutionAgent(self.executor)
+
+        # Dynamic Discovery, Opportunity Engine & Champion/Challenger Framework
+        self.discovery_manager = MarketDiscoveryManager()
+        self.champion_engine = ChampionChallengerEngine()
+        self.opportunity_engine = OpportunityEngine()
 
         # Decision Audit, Shadow Trading & Experiment Subsystems
         self.auditor = DecisionAuditor()
@@ -250,6 +264,8 @@ class TradingOrchestrator:
         self.closed_trades: list = []
         # Structured trade log for dashboard (newest last, cap 50)
         self.trade_log: list = []
+        # Real-time Inter-Agent Decision & Chat Stream log
+        self.agent_chat_logs: list = []
         # Durable open-trade view for dashboard (monitor can drop short-lived contracts)
         self.open_trade_meta: Dict[Any, Dict[str, Any]] = {}
         self.min_net_return = float(MIN_NET_RETURN)
@@ -282,6 +298,27 @@ class TradingOrchestrator:
             MAX_OPEN_TRADES,
             self.telegram.is_configured(),
         )
+
+    def _log_agent_chat(
+        self,
+        agent_name: str,
+        symbol: str,
+        action: str,
+        message: str,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Log structured real-time inter-agent chat & consensus messages for dashboard UI."""
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "agent_name": agent_name,
+            "symbol": symbol,
+            "action": action,
+            "message": message,
+            "meta": meta or {},
+        }
+        self.agent_chat_logs.append(entry)
+        if len(self.agent_chat_logs) > 100:
+            self.agent_chat_logs = self.agent_chat_logs[-100:]
 
     def open_trade_count(self) -> int:
         mon = set(self.monitor.open_contracts.keys())
@@ -465,9 +502,27 @@ class TradingOrchestrator:
             agent_signals.extend(await self.trend_agent.evaluate(eval_context))
             agent_signals.extend(await self.volatility_agent.evaluate(eval_context))
             agent_signals.extend(await self.pattern_agent.evaluate(eval_context))
+            agent_signals.extend(await self.step_agent.evaluate(eval_context))
+
+            # Enforce strict Deriv contract direction rules before consensus:
+            # Boom indices -> CALL only; Crash indices -> PUT only
+            if is_boom_symbol(symbol):
+                agent_signals = [s for s in agent_signals if str(s.contract_type).upper() == "CALL"]
+            elif is_crash_symbol(symbol):
+                agent_signals = [s for s in agent_signals if str(s.contract_type).upper() == "PUT"]
 
             if not agent_signals:
                 continue
+
+            # Log specialist agent signals to real-time agent chat stream
+            for sig in agent_signals:
+                self._log_agent_chat(
+                    sig.agent_name,
+                    symbol,
+                    "VOTE",
+                    f"Voted {sig.contract_type} with {sig.confidence*100:.0f}% confidence: {sig.rationale}",
+                    {"confidence": sig.confidence, "weight": sig.weight}
+                )
 
             # Step 3: Learning Agent confidence adjustments
             adjusted_signals = await self.learning_agent.evaluate({
@@ -487,13 +542,34 @@ class TradingOrchestrator:
                 ct = decision.contract_type
                 raw_conf = decision.confidence
 
+                voters_list = [v.agent_name for v in decision.votes]
+                self._log_agent_chat(
+                    "ConsensusAgent",
+                    symbol,
+                    "CONSENSUS",
+                    f"Consensus reached for {ct}! Ensemble Score: {decision.ensemble_score*100:.1f}% across [{', '.join(voters_list)}].",
+                    {"ensemble_score": decision.ensemble_score, "voters": voters_list}
+                )
+
                 # Optimization #2: Multi-timeframe HTF alignment gate
                 htf_ok = check_multi_timeframe_alignment(ticks, ct)
 
                 # Optimization #1: Dynamic Expiry Scaling by Volatility/ATR
-                base_dur = intent.get("duration") or 5
-                base_unit = intent.get("duration_unit") or "t"
+                if is_fx_symbol(symbol) or is_spike_synthetic(symbol) or is_boom_symbol(symbol) or is_crash_symbol(symbol):
+                    base_dur = preferred_minute_duration(symbol, self.minute_duration)
+                    base_unit = "m"
+                    intent["duration"] = base_dur
+                    intent["duration_unit"] = base_unit
+                    intent["horizon"] = "minute"
+                    intent["family"] = "minute_rise_fall"
+                else:
+                    base_dur = intent.get("duration") or 5
+                    base_unit = intent.get("duration_unit") or "t"
+
                 scaled_dur, scaled_unit = calculate_atr_scaled_duration(ticks, base_dur, base_unit)
+                if is_spike_synthetic(symbol) or is_boom_symbol(symbol) or is_crash_symbol(symbol):
+                    scaled_unit = "m"
+                    scaled_dur = max(1, scaled_dur if scaled_dur <= 5 else 1)
 
                 # Optimization #4: Live Payout EV Gating
                 ev_val = compute_ev(decision.confidence, intent.get("payout_rate", DEFAULT_PAYOUT_RATE))
@@ -531,7 +607,7 @@ class TradingOrchestrator:
                     rejection_reason = "cooldown"
                 elif not htf_ok:
                     rejection_reason = "htf_alignment"
-                elif ev_val < 0.08:
+                elif ev_val < 0.0:
                     rejection_reason = "ev_gate"
                 elif not pm_ok:
                     rejection_reason = "portfolio_manager"
@@ -542,6 +618,14 @@ class TradingOrchestrator:
                     trace.final_decision = "REJECTED_SHADOW" if rejection_reason != "portfolio_manager" else "REJECTED_STOPPED"
                     trace.rejection_reason = rejection_reason
                     self.auditor.record_trace(trace)
+
+                    self._log_agent_chat(
+                        "RiskAgent",
+                        symbol,
+                        "REJECT",
+                        f"Candidate {ct} ({scaled_dur}{scaled_unit}) rejected by gate '{rejection_reason}' (EV: {ev_val:+.2f}). Spawned shadow trade.",
+                        {"rejection_reason": rejection_reason, "ev": ev_val}
+                    )
 
                     # Spawn Shadow Trade for hypothetical tracking (NEVER executes real trade)
                     self.shadow_trader.spawn_shadow_trade(
@@ -573,6 +657,14 @@ class TradingOrchestrator:
                 trace.final_decision = "EXECUTED"
                 self.auditor.record_trace(trace)
 
+                self._log_agent_chat(
+                    "PortfolioManagerAgent",
+                    symbol,
+                    "APPROVE",
+                    f"Capital allocation approved for {ct} ({scaled_dur}{scaled_unit}, EV: {ev_val:+.2f}). Passing order to ExecutionAgent.",
+                    {"ev": ev_val}
+                )
+
                 intent["duration"] = scaled_dur
                 intent["duration_unit"] = scaled_unit
                 intent["confidence"] = decision.confidence
@@ -593,17 +685,35 @@ class TradingOrchestrator:
         if not candidates:
             return None
 
-        # EV ranking & filtering
-        candidates = ev_rank(candidates, allow_negative=False)
-        if not candidates:
+        # Stage A & Stage B Opportunity Engine Qualification, Scoring & Ranking
+        ranked_opps = self.opportunity_engine.evaluate_and_rank_candidates(
+            candidates, self.champion_engine
+        )
+        selected_opps = self.opportunity_engine.select_top_opportunities(ranked_opps, max_trades=1)
+
+        if not selected_opps:
             return None
 
-        # Correlation filtering
-        candidates = self.correlation_filter.filter_candidates(candidates)
-        if not candidates:
+        top_opp = selected_opps[0]
+        best = top_opp.intent
+
+        # Apply Tier-based Stake Scaling
+        base_stake = float(best.get("base_stake", MIN_STAKE))
+        best["stake"] = round(base_stake * top_opp.stake_multiplier, 2)
+        best["tier"] = top_opp.tier
+        best["opportunity_score"] = top_opp.opportunity_score
+
+        if top_opp.tier == "TIER_C":
+            # Tier C observation: Paper/Shadow trade only
+            self._log_agent_chat(
+                "OpportunityEngine",
+                top_opp.symbol,
+                "PAPER_OBSERVE",
+                f"Candidate {top_opp.contract_type} placed in Tier C (Score: {top_opp.opportunity_score:.1f}). Paper observation only.",
+                {"opportunity_score": top_opp.opportunity_score, "tier": top_opp.tier}
+            )
             return None
 
-        best = self.selector.select_best_trade(candidates)
         if best:
             self.anti_spiral.note_selected(str(best["symbol"]), str(best["contract_type"]))
 
@@ -859,8 +969,8 @@ class TradingOrchestrator:
                             )
                             if intent:
                                 intent["family"] = "rise_fall"
-                                # FX XML is 30m — keep unit so we don't default to ticks
-                                if is_fx_symbol(symbol):
+                                # FX and Spike Synthetics (Boom/Crash) require minute durations (not ticks)
+                                if is_fx_symbol(symbol) or is_spike_synthetic(symbol):
                                     intent["duration"] = preferred_minute_duration(
                                         symbol, self.minute_duration
                                     )
@@ -923,9 +1033,7 @@ class TradingOrchestrator:
                 )
 
             # ---- Minute Rise/Fall (candles + EMA/RSI) ----
-            # Boom/Crash/Jump etc reject multi-minute durations → ticks only.
-            # FX uses long horizon (30–40m) via preferred_minute_duration().
-            minute_ok = not is_spike_synthetic(symbol)
+            minute_ok = True
             if self.enable_minute and rf_allowed and not skip_rf and minute_ok:
                 m_dur = preferred_minute_duration(symbol, self.minute_duration)
                 # FX long holds: slightly lower conf floor (trend edge compounds)
@@ -1257,17 +1365,12 @@ class TradingOrchestrator:
                     "error": err,
                 }
             )
-            bal_now = self.client.get_balance()
-            await self.telegram.send_notification(
-                self.telegram.format_trade_error(
-                    title="Trade failed",
-                    error=err,
-                    balance=bal_now,
-                    currency=self.client.get_currency(),
-                    symbol=best["symbol"],
-                    contract_type=best["contract_type"],
-                    stake=stake,
-                )
+            # Log failed proposal event locally without spamming Telegram
+            logger.warning(
+                "Proposal path returned None for %s %s: %s",
+                best["symbol"],
+                best["contract_type"],
+                err[:120],
             )
             return None
 
@@ -1522,6 +1625,13 @@ class TradingOrchestrator:
                     participating_agents=participating,
                     profit=profit,
                 )
+
+                # Champion/Challenger & Market Discovery lifecycle outcome tracking
+                stype = meta.get("strategy") or "MultiAgentConsensus"
+                self.champion_engine.record_result(
+                    symbol, stype, is_win, profit, confidence=float(meta.get("confidence") or 0.0)
+                )
+                self.discovery_manager.record_paper_trade(symbol, is_win)
 
 
         # DeepSeek per-market analysis (triggers every 100 closes for this symbol)
@@ -1791,6 +1901,10 @@ class TradingOrchestrator:
             "fx_minute_duration": preferred_minute_duration("frxEURUSD", self.minute_duration),
             "multi_agent": self.multi_agent_status(),
             "decision_intelligence": self.decision_intelligence_status(),
+            "agent_chat_logs": self.agent_chat_logs[-40:],
+            "discovery_stats": self.discovery_manager.get_discovery_stats(),
+            "champion_rankings": self.champion_engine.get_rankings(),
+            "opportunity_stats": self.opportunity_engine.get_stats(),
         }
 
 

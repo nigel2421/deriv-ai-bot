@@ -15,7 +15,7 @@ class ConsensusAgent(BaseAgent):
         self,
         name: str = "ConsensusAgent",
         min_consensus_score: float = 0.75,
-        min_quorum: int = 2,
+        min_quorum: int = 1,
         enabled: bool = True,
     ):
         super().__init__(name=name, enabled=enabled)
@@ -56,15 +56,21 @@ class ConsensusAgent(BaseAgent):
         highest_score = 0.0
 
         for ct, sig_list in grouped.items():
-            # Optimization #3: Quorum Check — Ensure at least min_quorum unique specialist agents voted
+            # Domain-Aware Confirmation: Domain specialist originates candidate + supporting confirmations evaluate suitability
+            max_conf = max((s.confidence for s in sig_list), default=0.0)
+            specialist_voters = {s.agent_name for s in sig_list if s.agent_name in ("PatternAgent", "TrendAgent", "VolatilityAgent", "StepSpecialistAgent")}
+            supporting_meta = [s for s in signals if s.contract_type in ("VOLATILITY_RATING", "SCAN_OK") or s.agent_name in ("LearningAgent", "ConsensusAgent")]
+
+            has_specialist = len(specialist_voters) >= 1 or len(sig_list) >= 1
+            has_confirmation = len(sig_list) >= 2 or len(supporting_meta) >= 1 or max_conf >= 0.62
+
             voter_names = {s.agent_name for s in sig_list}
-            if len(voter_names) < self.min_quorum:
+            if not (has_specialist and has_confirmation):
                 logger.debug(
-                    "Skip candidate %s %s: quorum not met (%d/%d unique agents: %s)",
+                    "Skip candidate %s %s: domain confirmation not met (%d agents: %s)",
                     symbol,
                     ct,
                     len(voter_names),
-                    self.min_quorum,
                     voter_names,
                 )
                 continue

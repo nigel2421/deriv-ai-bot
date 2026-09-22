@@ -37,19 +37,42 @@ run_cmd("sleep 4")
 # 3. Check logs
 run_cmd("cd /bot && docker compose logs --tail=25 api-dashboard")
 
-# 4. Configure Nginx reverse proxy on port 80
+# 4. Configure Nginx reverse proxy on port 80 for multi-application support
 nginx_conf = """server {
     listen 80 default_server;
     listen [::]:80 default_server;
 
     server_name _;
 
-    location / {
-        proxy_pass http://127.0.0.1:8080;
+    # Deriv AI Bot application at /bot/
+    location /bot/ {
+        proxy_pass http://127.0.0.1:8080/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Prefix /bot;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
+    location = /bot {
+        return 301 /bot/;
+    }
+
+    # Root location (serves default application)
+    location / {
+        proxy_pass http://127.0.0.1:8080/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
     }
 }
 """

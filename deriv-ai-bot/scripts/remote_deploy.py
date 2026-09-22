@@ -60,13 +60,16 @@ def upload_directory(sftp, local_dir, remote_dir):
             sftp.mkdir(remote_root)
             
         for file in files:
-            if file.endswith((".pyc", ".pyo", ".csv", ".log")) or file == "xml_batch_analysis.json":
+            if file.endswith((".pyc", ".pyo", ".csv", ".log", ".jsonl", ".tmp")) or file == "xml_batch_analysis.json":
                 continue
             local_file_path = os.path.join(root, file)
             remote_file_path = os.path.normpath(os.path.join(remote_root, file)).replace("\\", "/")
             
             print(f"  -> Uploading: {os.path.join(rel_path, file)}")
-            sftp.put(local_file_path, remote_file_path)
+            try:
+                sftp.put(local_file_path, remote_file_path)
+            except (IOError, OSError) as e:
+                print(f"  [WARN] Skipped active file {file}: {e}")
 
 
 def main():

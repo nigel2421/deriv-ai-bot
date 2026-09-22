@@ -84,6 +84,10 @@ class BotRuntime:
             "mor": risk.get("mor") or {},
             "correlation": risk.get("correlation") or {},
             "deepseek": risk.get("deepseek") or {},
+            "agent_chat_logs": risk.get("agent_chat_logs") or [],
+            "discovery_stats": risk.get("discovery_stats") or {},
+            "champion_rankings": risk.get("champion_rankings") or [],
+            "opportunity_stats": risk.get("opportunity_stats") or {},
             "risk": {
                 k: risk.get(k)
                 for k in (

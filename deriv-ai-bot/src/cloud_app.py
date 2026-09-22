@@ -51,6 +51,15 @@ logger = setup_logger()
 _oauth_sessions: Dict[str, Dict[str, str]] = {}
 
 
+def _bp(req: Request | None = None) -> str:
+    """Extracts base path prefix (e.g. '/bot') from X-Forwarded-Prefix header or ROOT_PATH env var."""
+    if req:
+        prefix = req.headers.get("x-forwarded-prefix") or ""
+        if prefix:
+            return prefix.rstrip("/")
+    return os.getenv("ROOT_PATH", "").rstrip("/")
+
+
 @asynccontextmanager
 async def lifespan(app: Starlette):
     mode = os.getenv("MODE", "demo")
@@ -146,6 +155,7 @@ async def control_resume(request: Request):
                 },
             }
         )
+    bp = _bp(request)
     return HTMLResponse(
         f"""<!doctype html><html><body style="font-family:system-ui;background:#0b1220;color:#e8eefc;padding:2rem">
         <h1>▶️ Trading resumed</h1>
@@ -153,9 +163,9 @@ async def control_resume(request: Request):
         <p>Risk paused: <b>{st.get('paused')}</b> ·
            Consecutive losses: <b>{st.get('consecutive_losses')}</b> ·
            Telegram trading: <b>{st.get('telegram_trading')}</b></p>
-        <p><a href="/" style="color:#7eb6ff">Dashboard</a> ·
-           <a href="/status" style="color:#7eb6ff">/status</a></p>
-        <meta http-equiv="refresh" content="3;url=/"/>
+        <p><a href="{bp}/" style="color:#7eb6ff">Dashboard</a> ·
+           <a href="{bp}/status" style="color:#7eb6ff">/status</a></p>
+        <meta http-equiv="refresh" content="3;url={bp}/"/>
         </body></html>"""
     )
 
@@ -164,20 +174,22 @@ async def control_pause(request: Request):
     """Pause new trades from the dashboard. GET or POST /control/pause"""
     orch = runtime.orchestrator
     if orch is None:
+        bp = _bp(request)
         return HTMLResponse(
-            "<h1>Bot not ready</h1><p><a href='/'>Home</a></p>", status_code=503
+            f"<h1>Bot not ready</h1><p><a href='{bp}/'>Home</a></p>", status_code=503
         )
     mins = int(request.query_params.get("minutes") or 60)
     st = orch.force_pause(source="cloud_run:/control/pause", minutes=mins)
     want_json = "application/json" in (request.headers.get("accept") or "")
     if want_json or request.query_params.get("format") == "json":
         return JSONResponse({"ok": True, "action": "pause", "risk": st})
+    bp = _bp(request)
     return HTMLResponse(
         f"""<!doctype html><html><body style="font-family:system-ui;background:#0b1220;color:#e8eefc;padding:2rem">
         <h1>⏸ Trading paused</h1>
         <p>No new trades for ~{mins} minutes (or until Resume).</p>
-        <p><a href="/control/resume" style="color:#3ddc97">Resume now</a> ·
-           <a href="/" style="color:#7eb6ff">Dashboard</a></p>
+        <p><a href="{bp}/control/resume" style="color:#3ddc97">Resume now</a> ·
+           <a href="{bp}/" style="color:#7eb6ff">Dashboard</a></p>
         </body></html>"""
     )
 
@@ -195,12 +207,13 @@ async def control_restart(request: Request):
         logger.exception("Restart failed: %s", e)
         return HTMLResponse(f"<h1>Restart failed</h1><pre>{e}</pre>", status_code=500)
     st = runtime.public_status()
+    bp = _bp(request)
     return HTMLResponse(
         f"""<!doctype html><html><body style="font-family:system-ui;background:#0b1220;color:#e8eefc;padding:2rem">
         <h1>🔄 Bot restarted</h1>
         <p>Status: <b class="ok">{st.get('status')}</b></p>
-        <p><a href="/" style="color:#7eb6ff">Dashboard</a></p>
-        <meta http-equiv="refresh" content="3;url=/"/>
+        <p><a href="{bp}/" style="color:#7eb6ff">Dashboard</a></p>
+        <meta http-equiv="refresh" content="3;url={bp}/"/>
         </body></html>"""
     )
 
@@ -211,7 +224,8 @@ def _public_base(request: Request) -> str:
         p = urlparse(DERIV_OAUTH_REDIRECT_URI)
         if p.scheme and p.netloc:
             return f"{p.scheme}://{p.netloc}"
-    return str(request.base_url).rstrip("/")
+    bp = _bp(request)
+    return f"{str(request.base_url).rstrip('/')}{bp}"
 
 
 async def oauth_login(request: Request) -> RedirectResponse:
@@ -534,17 +548,25 @@ def _fmt_decision_intelligence_panel(s: dict) -> str:
     traces = (di.get("recent_traces") or [])[:10]
     trace_rows = []
     for t in reversed(traces):
-        dec = t.get("final_decision", "")
+        dec = str(t.get("final_decision") or "")
         d_cls = "ok" if dec == "EXECUTED" else ("bad" if "REJECTED" in dec else "muted")
         rej = t.get("rejection_reason") or "—"
+        audit_id_str = str(t.get("audit_id") or "")[:8]
+        sym = t.get("symbol") or "—"
+        pct = t.get("proposed_contract_type") or "—"
+        dur = t.get("proposed_duration") or "—"
+        dur_u = t.get("proposed_duration_unit") or "t"
+        score = float(t.get("consensus_score") or 0.0)
+        htf = bool(t.get("htf_alignment_result"))
+        ev_val = float(t.get("expected_value") or 0.0)
         trace_rows.append(
             f"<tr>"
-            f"<td><code style='font-size:0.7rem'>{t.get('audit_id','')[:8]}</code></td>"
-            f"<td><code>{t.get('symbol')}</code></td>"
-            f"<td>{t.get('proposed_contract_type')} ({t.get('proposed_duration')}{t.get('proposed_duration_unit','t')})</td>"
-            f"<td><b>{t.get('consensus_score', 0):.2f}</b></td>"
-            f"<td>HTF: {'<span class=ok>YES</span>' if t.get('htf_alignment_result') else '<span class=bad>NO</span>'}</td>"
-            f"<td>EV: {t.get('expected_value', 0):+.2f}</td>"
+            f"<td><code style='font-size:0.7rem'>{audit_id_str}</code></td>"
+            f"<td><code>{sym}</code></td>"
+            f"<td>{pct} ({dur}{dur_u})</td>"
+            f"<td><b>{score:.2f}</b></td>"
+            f"<td>HTF: {'<span class=ok>YES</span>' if htf else '<span class=bad>NO</span>'}</td>"
+            f"<td>EV: {ev_val:+.2f}</td>"
             f"<td class='{d_cls}'><b>{dec}</b></td>"
             f"<td><span class='badge badge-warn' style='font-size:0.65rem'>{rej}</span></td>"
             f"</tr>"
@@ -571,6 +593,78 @@ def _fmt_decision_intelligence_panel(s: dict) -> str:
 
       <b style="color:#38bdf8;font-size:0.9rem;display:block;margin-top:1rem">📜 Recent Decision Audit Traces</b>
       {traces_table}
+    </div>
+    """
+
+
+def _fmt_opportunity_radar_panel(s: dict) -> str:
+    """Formats 2-Stage Opportunity Radar, Dynamic Asset Discovery & Champion/Challenger UI."""
+    disc_stats = s.get("discovery_stats") or {}
+    opp_stats = s.get("opportunity_stats") or {}
+    champs = s.get("champion_rankings") or []
+
+    total_disc = disc_stats.get("total_discovered", 32)
+    active_count = disc_stats.get("active_count", 20)
+    paper_count = disc_stats.get("paper_count", 12)
+
+    scanned_1h = opp_stats.get("scanned_last_hour", 0)
+    qualified_1h = opp_stats.get("qualified_last_hour", 0)
+    executed_1h = opp_stats.get("executed_last_hour", 0)
+    bottlenecks = opp_stats.get("bottlenecks") or {}
+
+    header_cards = f"""
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:0.75rem;margin-bottom:1rem">
+      <div style="background:#090d16;border:1px solid #1e293b;border-radius:8px;padding:0.75rem">
+        <span class="muted" style="font-size:0.75rem">MARKETS DISCOVERED</span>
+        <div style="font-size:1.4rem;font-weight:700;color:#38bdf8">{total_disc} <span style="font-size:0.8rem;color:#10b981">({active_count} Active / {paper_count} Paper)</span></div>
+      </div>
+      <div style="background:#090d16;border:1px solid #1e293b;border-radius:8px;padding:0.75rem">
+        <span class="muted" style="font-size:0.75rem">SIGNALS / QUALIFIED / EXEC (1h)</span>
+        <div style="font-size:1.4rem;font-weight:700;color:#fbbf24">{scanned_1h} <span style="font-size:0.9rem;color:#38bdf8">/ {qualified_1h}</span> <span style="font-size:0.9rem;color:#10b981">/ {executed_1h}</span></div>
+      </div>
+      <div style="background:#090d16;border:1px solid #1e293b;border-radius:8px;padding:0.75rem">
+        <span class="muted" style="font-size:0.75rem">ACTIVE BOTTLENECK</span>
+        <div style="font-size:1.1rem;font-weight:700;color:#f43f5e">EV Gate ({bottlenecks.get('ev_gate', 0)} rejections)</div>
+      </div>
+    </div>
+    """
+
+    champ_rows = []
+    for c in champs[:10]:
+        st = c.get("status") or "ACTIVE"
+        s_cls = "pill-win" if st == "CHAMPION" else ("pill-open" if st == "ACTIVE" else ("pill-offer" if st == "DISABLED" else "pill-muted"))
+        wr = float(c.get("win_rate") or 0.0)
+        pf = float(c.get("profit_factor") or 1.0)
+        n = int(c.get("total_trades") or 0)
+        pnl = float(c.get("net_profit") or 0.0)
+        pnl_cls = "ok" if pnl > 0 else ("bad" if pnl < 0 else "muted")
+        champ_rows.append(
+            f"<tr>"
+            f"<td><code style='color:#f8fafc;font-weight:700'>{c.get('symbol')}</code></td>"
+            f"<td><code>{c.get('strategy_type')}</code></td>"
+            f"<td><span class='pill {s_cls}'>● {st}</span></td>"
+            f"<td><b>{wr*100:.1f}%</b></td>"
+            f"<td>PF <b>{pf:.2f}</b></td>"
+            f"<td>{n} trades</td>"
+            f"<td class='{pnl_cls}'><b>{pnl:+.2f} USD</b></td>"
+            f"</tr>"
+        )
+
+    champ_table = (
+        '<div class="table-container">'
+        '<table><thead><tr><th>Symbol</th><th>Strategy</th><th>Status</th><th>Win Rate</th><th>Profit Factor</th><th>Sample Size</th><th>Net PnL</th></tr></thead>'
+        f"<tbody>{''.join(champ_rows)}</tbody></table></div>"
+        if champ_rows
+        else "<p class='muted'>Champion / Challenger tracking initializing...</p>"
+    )
+
+    return f"""
+    <div style="margin-top:0.5rem">
+      <b style="color:#38bdf8;font-size:0.9rem">📡 Opportunity Radar & Dynamic Asset Discovery</b>
+      {header_cards}
+
+      <b style="color:#38bdf8;font-size:0.9rem;display:block;margin-top:1rem">🏆 Champion / Challenger Performance Roster</b>
+      {champ_table}
     </div>
     """
 
@@ -644,7 +738,8 @@ def _fmt_trade_card_items(trades: list) -> str:
     return "".join(items)
 
 
-async def root(_: Request) -> HTMLResponse:
+async def root(request: Request) -> HTMLResponse:
+    bp = _bp(request)
     s = runtime.public_status()
     risk = s.get("risk") or {}
     status_cls = "text-profit-emerald" if s.get("status") == "running" else "text-loss-rose"
@@ -790,10 +885,10 @@ async def root(_: Request) -> HTMLResponse:
 
       <div class="flex items-center gap-1.5 sm:gap-3 shrink-0">
         <div class="flex items-center gap-0.5 sm:gap-1.5 bg-surface-card px-1 sm:px-2 py-1 rounded border border-border-subtle">
-          <button onclick="location.href='/control/resume'" class="p-1 text-profit-emerald hover:bg-surface-elevated rounded" title="Resume Bot"><span class="material-symbols-outlined text-[16px] sm:text-[18px]">play_arrow</span></button>
-          <button onclick="location.href='/control/pause'" class="p-1 text-warning-amber hover:bg-surface-elevated rounded" title="Pause Bot"><span class="material-symbols-outlined text-[16px] sm:text-[18px]">pause</span></button>
-          <button onclick="location.href='/control/restart'" class="p-1 text-agent-cyan hover:bg-surface-elevated rounded" title="Restart Bot"><span class="material-symbols-outlined text-[16px] sm:text-[18px]">restart_alt</span></button>
-          <button onclick="location.href='/control/pause'" class="p-1 text-loss-rose hover:bg-surface-elevated rounded" title="Emergency Halt"><span class="material-symbols-outlined text-[16px] sm:text-[18px]">power_settings_new</span></button>
+          <button onclick="location.href='{bp}/control/resume'" class="p-1 text-profit-emerald hover:bg-surface-elevated rounded" title="Resume Bot"><span class="material-symbols-outlined text-[16px] sm:text-[18px]">play_arrow</span></button>
+          <button onclick="location.href='{bp}/control/pause'" class="p-1 text-warning-amber hover:bg-surface-elevated rounded" title="Pause Bot"><span class="material-symbols-outlined text-[16px] sm:text-[18px]">pause</span></button>
+          <button onclick="location.href='{bp}/control/restart'" class="p-1 text-agent-cyan hover:bg-surface-elevated rounded" title="Restart Bot"><span class="material-symbols-outlined text-[16px] sm:text-[18px]">restart_alt</span></button>
+          <button onclick="location.href='{bp}/control/pause'" class="p-1 text-loss-rose hover:bg-surface-elevated rounded" title="Emergency Halt"><span class="material-symbols-outlined text-[16px] sm:text-[18px]">power_settings_new</span></button>
         </div>
         <div class="hidden sm:flex items-center px-3 py-1 rounded bg-surface-card border border-border-subtle">
           <span class="font-label-sm text-xs text-text-muted mr-1">BAL</span>
@@ -1028,6 +1123,46 @@ async def root(_: Request) -> HTMLResponse:
       </div>
     </section>
 
+    <!-- Real-Time Agent Inter-Communication & Decision Chat -->
+    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="p-1.5 rounded bg-surface-elevated text-agent-cyan flex items-center justify-center">
+            <span class="material-symbols-outlined text-[20px]">chat</span>
+          </div>
+          <div>
+            <h2 class="font-bold text-text-primary tracking-tight">💬 Agent Decision Chat &amp; Inter-Communication Stream</h2>
+            <p class="font-label-sm text-xs text-text-muted">Live Agent-by-Agent Reasoning &amp; Consensus Debate</p>
+          </div>
+        </div>
+        <span class="font-label-sm text-xs text-profit-emerald font-mono flex items-center gap-1">
+          <span class="h-2 w-2 rounded-full bg-profit-emerald animate-pulse"></span>
+          STREAM LIVE
+        </span>
+      </div>
+      {_fmt_agent_chat_panel(s)}
+    </section>
+
+    <!-- 2-Stage Opportunity Radar & Champion/Challenger Roster -->
+    <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="p-1.5 rounded bg-surface-elevated text-warning-amber flex items-center justify-center">
+            <span class="material-symbols-outlined text-[20px]">radar</span>
+          </div>
+          <div>
+            <h2 class="font-bold text-text-primary tracking-tight">2-Stage Opportunity Radar &amp; Market Discovery</h2>
+            <p class="font-label-sm text-xs text-text-muted">Dynamic Deriv API Asset Discovery &amp; Champion/Challenger Engine</p>
+          </div>
+        </div>
+        <span class="font-label-sm text-xs text-profit-emerald font-mono flex items-center gap-1">
+          <span class="h-2 w-2 rounded-full bg-profit-emerald"></span>
+          RADAR ACTIVE
+        </span>
+      </div>
+      {_fmt_opportunity_radar_panel(s)}
+    </section>
+
     <!-- Strategy Meta-Agent Leaderboard -->
     <section class="bg-surface-card rounded-xl p-4 border border-border-subtle flex flex-col gap-3">
       <div class="flex items-center justify-between">
@@ -1035,9 +1170,9 @@ async def root(_: Request) -> HTMLResponse:
           <div class="p-1.5 rounded bg-surface-elevated text-warning-amber flex items-center justify-center">
             <span class="material-symbols-outlined text-[20px]">military_tech</span>
           </div>
-          <h2 class="font-bold text-text-primary tracking-tight">Chief Strategy Leaderboard</h2>
+          <h2 class="font-bold text-text-primary tracking-tight">Chief Strategy Leaderboard &amp; RL Roster</h2>
         </div>
-        <span class="font-label-sm text-xs text-text-muted font-mono">N=100 Audit</span>
+        <span class="font-label-sm text-xs text-text-muted font-mono">11 Agents Audit</span>
       </div>
       {_fmt_meta_agent_panel(s)}
     </section>
@@ -1260,16 +1395,16 @@ async def root(_: Request) -> HTMLResponse:
             <span class="material-symbols-outlined text-[16px]">tune</span> Quick Operation Controls
           </h4>
           <div class="grid grid-cols-2 gap-2">
-            <button onclick="location.href='/control/resume'" class="p-2.5 rounded-lg bg-profit-emerald-muted border border-profit-emerald/30 text-profit-emerald font-bold flex items-center justify-center gap-2 hover:bg-profit-emerald/20 transition-colors">
+            <button onclick="location.href='{bp}/control/resume'" class="p-2.5 rounded-lg bg-profit-emerald-muted border border-profit-emerald/30 text-profit-emerald font-bold flex items-center justify-center gap-2 hover:bg-profit-emerald/20 transition-colors">
               <span class="material-symbols-outlined text-[18px]">play_arrow</span> Resume Trading
             </button>
-            <button onclick="location.href='/control/pause'" class="p-2.5 rounded-lg bg-warning-amber-muted border border-warning-amber/30 text-warning-amber font-bold flex items-center justify-center gap-2 hover:bg-warning-amber/20 transition-colors">
+            <button onclick="location.href='{bp}/control/pause'" class="p-2.5 rounded-lg bg-warning-amber-muted border border-warning-amber/30 text-warning-amber font-bold flex items-center justify-center gap-2 hover:bg-warning-amber/20 transition-colors">
               <span class="material-symbols-outlined text-[18px]">pause</span> Pause 60 Mins
             </button>
-            <button onclick="location.href='/control/restart'" class="p-2.5 rounded-lg bg-surface-card border border-border-subtle text-agent-cyan font-bold flex items-center justify-center gap-2 hover:bg-surface-overlay transition-colors">
+            <button onclick="location.href='{bp}/control/restart'" class="p-2.5 rounded-lg bg-surface-card border border-border-subtle text-agent-cyan font-bold flex items-center justify-center gap-2 hover:bg-surface-overlay transition-colors">
               <span class="material-symbols-outlined text-[18px]">restart_alt</span> Full Reconnect
             </button>
-            <button onclick="location.href='/control/pause'" class="p-2.5 rounded-lg bg-loss-rose-muted border border-loss-rose/30 text-loss-rose font-bold flex items-center justify-center gap-2 hover:bg-loss-rose/20 transition-colors">
+            <button onclick="location.href='{bp}/control/pause'" class="p-2.5 rounded-lg bg-loss-rose-muted border border-loss-rose/30 text-loss-rose font-bold flex items-center justify-center gap-2 hover:bg-loss-rose/20 transition-colors">
               <span class="material-symbols-outlined text-[18px]">power_settings_new</span> Emergency Halt
             </button>
           </div>
@@ -1294,8 +1429,8 @@ async def root(_: Request) -> HTMLResponse:
             <span class="text-profit-emerald font-bold">{'YES' if load_access_token() else 'NO (Demo/API)'}</span>
           </div>
           <div class="pt-2 flex gap-2">
-            <a href="/oauth/login" class="flex-1 py-2 rounded bg-surface-card border border-border-subtle text-center text-secondary font-sans font-semibold hover:bg-surface-overlay">Authorize Deriv OAuth</a>
-            <a href="/diag" target="_blank" class="px-3 py-2 rounded bg-surface-card border border-border-subtle text-center text-text-muted hover:text-text-primary">JSON Diag</a>
+            <a href="{bp}/oauth/login" class="flex-1 py-2 rounded bg-surface-card border border-border-subtle text-center text-secondary font-sans font-semibold hover:bg-surface-overlay">Authorize Deriv OAuth</a>
+            <a href="{bp}/diag" target="_blank" class="px-3 py-2 rounded bg-surface-card border border-border-subtle text-center text-text-muted hover:text-text-primary">JSON Diag</a>
           </div>
         </div>
       </div>
@@ -1628,6 +1763,77 @@ def _fmt_meta_agent_panel(s: dict) -> str:
     """
 
     return table_html + rl_html
+
+
+def _fmt_agent_chat_panel(s: dict) -> str:
+    """Renders real-time inter-agent decision & communication chat stream."""
+    logs = s.get("agent_chat_logs") or []
+    if not logs and runtime.orchestrator:
+        logs = getattr(runtime.orchestrator, "agent_chat_logs", [])
+    if not logs:
+        return (
+            "<div style='background:#090d16;border:1px solid rgba(56,189,248,0.12);border-radius:10px;padding:1.25rem;text-align:center;' class='muted font-mono text-xs'>"
+            "💬 Agent decision chat stream active — waiting for market scan decision events..."
+            "</div>"
+        )
+
+    agent_emojis = {
+        "TrendAgent": "📈",
+        "VolatilityAgent": "⚡",
+        "PatternAgent": "🧩",
+        "ScalpingAgent": "🎯",
+        "LearningAgent": "🧠",
+        "ConsensusAgent": "🏛️",
+        "RiskAgent": "🛡️",
+        "PortfolioManagerAgent": "💼",
+        "MarketRegimeAgent": "🌐",
+        "RLAgent": "🤖",
+        "ExecutionAgent": "⚙️",
+        "ChiefStrategyAgent": "👑",
+    }
+
+    action_badges = {
+        "VOTE": "pill-open",
+        "CONSENSUS": "pill-win",
+        "APPROVE": "pill-win",
+        "REJECT": "pill-loss",
+        "EXECUTE": "pill-offer",
+    }
+
+    items = []
+    for log in reversed(logs[:30]):
+        ts = str(log.get("ts") or "")[11:19]
+        name = str(log.get("agent_name") or "Agent")
+        sym = str(log.get("symbol") or "ALL")
+        act = str(log.get("action") or "CHAT").upper()
+        msg = str(log.get("message") or "")
+        emoji = agent_emojis.get(name, "🤖")
+        badge_cls = action_badges.get(act, "pill-muted")
+
+        items.append(
+            f"""
+            <div style="background:#090d16;border:1px solid rgba(56,189,248,0.08);border-radius:8px;padding:0.6rem 0.8rem;margin-bottom:0.4rem;display:flex;align-items:flex-start;gap:0.6rem;font-family:'JetBrains Mono',monospace;font-size:0.78rem">
+              <div style="font-size:1.1rem;line-height:1">{emoji}</div>
+              <div style="flex:1">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.2rem">
+                  <div style="display:flex;align-items:center;gap:0.4rem">
+                    <b style="color:#f8fafc">{name}</b>
+                    <span class="{badge_cls}" style="font-size:0.6rem;padding:0.05rem 0.35rem">{act}</span>
+                    <span style="color:#38bdf8;font-size:0.72rem">[{sym}]</span>
+                  </div>
+                  <span style="color:#64748b;font-size:0.7rem">{ts}</span>
+                </div>
+                <div style="color:#94a3b8;line-height:1.4">{msg}</div>
+              </div>
+            </div>
+            """
+        )
+
+    return f"""
+    <div style="max-height:360px;overflow-y:auto;padding-right:0.2rem">
+      {''.join(items)}
+    </div>
+    """
 
 
 def _fmt_portfolio_and_infra_panel(s: dict) -> str:

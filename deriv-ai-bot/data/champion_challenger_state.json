@@ -1,0 +1,46 @@
+{
+  "R_50:MultiAgentConsensus": {
+    "symbol": "R_50",
+    "strategy_type": "MultiAgentConsensus",
+    "status": "CHALLENGER",
+    "total_trades": 6,
+    "wins": 6,
+    "losses": 0,
+    "win_rate": 1.0,
+    "net_profit": 5.1,
+    "profit_factor": 2.5,
+    "min_confidence_override": null,
+    "trades_history": [
+      {
+        "is_win": true,
+        "profit": 0.85,
+        "confidence": 0.78
+      },
+      {
+        "is_win": true,
+        "profit": 0.85,
+        "confidence": 0.82
+      },
+      {
+        "is_win": true,
+        "profit": 0.85,
+        "confidence": 0.78
+      },
+      {
+        "is_win": true,
+        "profit": 0.85,
+        "confidence": 0.82
+      },
+      {
+        "is_win": true,
+        "profit": 0.85,
+        "confidence": 0.78
+      },
+      {
+        "is_win": true,
+        "profit": 0.85,
+        "confidence": 0.82
+      }
+    ]
+  }
+}

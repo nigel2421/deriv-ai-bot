@@ -23,6 +23,36 @@
           "symbol": "R_25",
           "contract_type": "CALL",
           "timestamp": "2026-09-19T21:11:59.204027+00:00"
+        },
+        {
+          "shadow_id": "SHADOW_R_100_125127695541",
+          "symbol": "R_100",
+          "contract_type": "CALL",
+          "timestamp": "2026-09-21T12:51:27.695578+00:00"
+        },
+        {
+          "shadow_id": "SHADOW_R_100_125425836179",
+          "symbol": "R_100",
+          "contract_type": "CALL",
+          "timestamp": "2026-09-21T12:54:25.836224+00:00"
+        },
+        {
+          "shadow_id": "SHADOW_R_100_133436208263",
+          "symbol": "R_100",
+          "contract_type": "CALL",
+          "timestamp": "2026-09-21T13:34:36.208311+00:00"
+        },
+        {
+          "shadow_id": "SHADOW_R_100_100514564026",
+          "symbol": "R_100",
+          "contract_type": "CALL",
+          "timestamp": "2026-09-22T10:05:14.564055+00:00"
+        },
+        {
+          "shadow_id": "SHADOW_R_100_101341584087",
+          "symbol": "R_100",
+          "contract_type": "CALL",
+          "timestamp": "2026-09-22T10:13:41.584126+00:00"
         }
       ]
     },

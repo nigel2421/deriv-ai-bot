@@ -7,8 +7,8 @@
       Adaptive learner re-weights markets after every closed trade.
     -->
     <global>
-        <!-- Raise/lower trade gate here only (e.g. 0.75 or 0.85) -->
-        <min_confidence>0.78</min_confidence>
+        <!-- Raise/lower trade gate here only (e.g. 0.60 to 0.75) -->
+        <min_confidence>0.62</min_confidence>
         <!-- flat = never double after loss (recommended). martingale = optional. -->
         <stake_mode>flat</stake_mode>
         <!-- Tighter daily loss: stop digging when demo is bleeding -->
