@@ -40,6 +40,7 @@ class LearningAgent(BaseAgent):
             "TrendAgent": {"weight": 1.0, "wins": 0, "losses": 0, "win_rate": 0.50},
             "VolatilityAgent": {"weight": 1.0, "wins": 0, "losses": 0, "win_rate": 0.50},
             "PatternAgent": {"weight": 1.0, "wins": 0, "losses": 0, "win_rate": 0.50},
+            "DigitStatAgent": {"weight": 1.0, "wins": 0, "losses": 0, "win_rate": 0.50},
         }
         if self.weights_path.exists():
             try:

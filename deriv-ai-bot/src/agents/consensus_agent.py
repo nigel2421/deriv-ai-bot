@@ -58,8 +58,22 @@ class ConsensusAgent(BaseAgent):
         for ct, sig_list in grouped.items():
             # Domain-Aware Confirmation: Domain specialist originates candidate + supporting confirmations evaluate suitability
             max_conf = max((s.confidence for s in sig_list), default=0.0)
-            specialist_voters = {s.agent_name for s in sig_list if s.agent_name in ("PatternAgent", "TrendAgent", "VolatilityAgent", "StepSpecialistAgent")}
+            specialist_voters = {s.agent_name for s in sig_list if s.agent_name in ("PatternAgent", "DigitStatAgent", "TrendAgent", "VolatilityAgent", "StepSpecialistAgent")}
             supporting_meta = [s for s in signals if s.contract_type in ("VOLATILITY_RATING", "SCAN_OK") or s.agent_name in ("LearningAgent", "ConsensusAgent")]
+
+            is_digit = ct in ("DIGITOVER", "DIGITUNDER", "DIGITMATCH", "DIGITDIFF", "DIGITEVEN", "DIGITODD")
+            digit_voters = {s.agent_name for s in sig_list if s.agent_name in ("PatternAgent", "DigitStatAgent", "StepSpecialistAgent")}
+
+            # Enforce 2-agent quorum for digit contracts if min_quorum >= 2
+            if is_digit and self.min_quorum >= 2 and len(digit_voters) < 2:
+                logger.debug(
+                    "Skip candidate %s %s: digit multi-agent quorum not met (need >=2 digit agents, got %d: %s)",
+                    symbol,
+                    ct,
+                    len(digit_voters),
+                    digit_voters,
+                )
+                continue
 
             has_specialist = len(specialist_voters) >= 1 or len(sig_list) >= 1
             has_confirmation = len(sig_list) >= 2 or len(supporting_meta) >= 1 or max_conf >= 0.62

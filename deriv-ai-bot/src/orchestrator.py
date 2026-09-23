@@ -71,6 +71,7 @@ from src.services.market_discovery_manager import MarketDiscoveryManager
 from src.strategy.champion_challenger_engine import ChampionChallengerEngine
 from src.strategy.opportunity_engine import OpportunityEngine, QualifiedOpportunity
 from src.agents.step_specialist_agent import StepSpecialistAgent
+from src.agents.digit_stat_agent import DigitStatAgent
 from datetime import datetime, timezone
 
 
@@ -224,6 +225,7 @@ class TradingOrchestrator:
         self.trend_agent = TrendAgent()
         self.volatility_agent = VolatilityAgent()
         self.pattern_agent = PatternAgent()
+        self.digit_stat_agent = DigitStatAgent()
         self.step_agent = StepSpecialistAgent()
         self.learning_agent = LearningAgent()
         self.consensus_agent = ConsensusAgent(
@@ -502,6 +504,7 @@ class TradingOrchestrator:
             agent_signals.extend(await self.trend_agent.evaluate(eval_context))
             agent_signals.extend(await self.volatility_agent.evaluate(eval_context))
             agent_signals.extend(await self.pattern_agent.evaluate(eval_context))
+            agent_signals.extend(await self.digit_stat_agent.evaluate(eval_context))
             agent_signals.extend(await self.step_agent.evaluate(eval_context))
 
             # Enforce strict Deriv contract direction rules before consensus:

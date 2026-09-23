@@ -9,6 +9,7 @@ from src.agents.base_agent import (
     ConsensusDecision,
 )
 from src.agents.bus import AgentEventBus
+from src.agents.digit_stat_agent import DigitStatAgent
 
 __all__ = [
     "BaseAgent",
@@ -16,4 +17,6 @@ __all__ = [
     "AgentVote",
     "ConsensusDecision",
     "AgentEventBus",
+    "DigitStatAgent",
 ]
+
